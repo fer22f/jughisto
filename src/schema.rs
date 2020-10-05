@@ -27,8 +27,4 @@ table! {
 
 joinable!(problem -> contest (contest_id));
 
-allow_tables_to_appear_in_same_query!(
-    contest,
-    problem,
-    user,
-);
+allow_tables_to_appear_in_same_query!(contest, problem, user,);
