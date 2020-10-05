@@ -4,9 +4,9 @@ use serde::Serialize;
 use std::env;
 use thiserror::Error;
 
-use super::schema::user as user_column;
-use super::schema::user;
-use super::schema::user::dsl::user as user_table;
+use crate::schema::user as user_column;
+use crate::schema::user;
+use crate::schema::user::dsl::user as user_table;
 
 #[derive(Queryable)]
 struct UserWithHashedPassword {

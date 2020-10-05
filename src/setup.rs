@@ -3,8 +3,8 @@ use diesel::Connection;
 use std::env;
 use dotenv::dotenv;
 
-use super::models::user;
-use super::models::user::NewUser;
+use crate::models::user;
+use crate::models::user::NewUser;
 
 pub fn setup_dotenv() {
     dotenv().expect(".env should work");

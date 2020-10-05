@@ -45,13 +45,11 @@ mod error {
 pub use error::ImportContestError;
 
 mod xml {
+    use prelude::*;
     use quick_xml::de::{from_str};
-    use std::io::{Read, Seek};
-    use zip::ZipArchive;
-    use serde::Deserialize;
 
-    pub fn get_from_zip<T: for<'de> Deserialize<'de>, R: Read + Seek>(zip: &mut ZipArchive<R>, path: &str) -> Result<T, crate::import_contest::ImportContestError> {
-        let xml = crate::import_contest::read_string_from_zip_by_name(&mut *zip, path)?;
+    pub fn get_from_zip<T: for<'de> Deserialize<'de>, R: Read + Seek>(zip: &mut ZipArchive<R>, path: &str) -> Result<T, ImportContestError> {
+        let xml = super::read_string_from_zip_by_name(&mut *zip, path)?;
         let deserialized: T = from_str(&xml)?;
         Ok(deserialized)
     }
@@ -60,6 +58,7 @@ mod xml {
         pub use serde::Deserialize;
         pub use zip::ZipArchive;
         pub use std::io::{Read, Seek};
+        pub use super::super::ImportContestError;
     }
 
     pub mod contest {
@@ -94,7 +93,7 @@ mod xml {
             pub url: String,
         }
 
-        pub fn get_from_zip<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Contest, crate::import_contest::ImportContestError> {
+        pub fn get_from_zip<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Contest, ImportContestError> {
             super::get_from_zip::<Contest, R>(&mut *zip, "contest.xml")
         }
     }
@@ -365,7 +364,7 @@ mod xml {
             pub value: String,
         }
 
-        pub fn get_from_zip<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Problem, crate::import_contest::ImportContestError> {
+        pub fn get_from_zip<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Problem, ImportContestError> {
             super::get_from_zip::<Problem, R>(&mut *zip, name)
         }
     }
