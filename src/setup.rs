@@ -1,7 +1,7 @@
 use diesel::sqlite::SqliteConnection;
 use diesel::Connection;
-use std::env;
 use dotenv::dotenv;
+use std::env;
 
 use crate::models::user;
 use crate::models::user::NewUser;

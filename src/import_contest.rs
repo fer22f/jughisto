@@ -1,16 +1,16 @@
-use std::io::{Read, Seek};
 use regex::Regex;
+use std::io::{Read, Seek};
 use zip::ZipArchive;
 
 mod error {
-    use std::io;
-    use zip::result::ZipError;
     use quick_xml::de::DeError;
-    use std::io::Cursor;
-    use rocket::request::Request;
-    use rocket::response::{self, Response, Responder};
     use rocket::http::ContentType;
+    use rocket::request::Request;
+    use rocket::response::{self, Responder, Response};
+    use std::io;
+    use std::io::Cursor;
     use thiserror::Error;
+    use zip::result::ZipError;
 
     #[derive(Error, Debug)]
     pub enum ImportContestError {
@@ -19,24 +19,24 @@ mod error {
         #[error(transparent)]
         XmlDecode(#[from] DeError),
         #[error(transparent)]
-        Io(#[from] io::Error)
+        Io(#[from] io::Error),
     }
 
     impl<'a> Responder<'a> for ImportContestError {
         fn respond_to(self, _: &Request) -> response::Result<'a> {
             match self {
-                ImportContestError::Zip(e) =>
-                    Response::build()
-                        .header(ContentType::Plain)
-                        .sized_body(Cursor::new(e.to_string())).ok(),
-                ImportContestError::XmlDecode(e) =>
-                    Response::build()
-                        .header(ContentType::Plain)
-                        .sized_body(Cursor::new(e.to_string())).ok(),
-                ImportContestError::Io(e) =>
-                    Response::build()
-                        .header(ContentType::Plain)
-                        .sized_body(Cursor::new(e.to_string())).ok(),
+                ImportContestError::Zip(e) => Response::build()
+                    .header(ContentType::Plain)
+                    .sized_body(Cursor::new(e.to_string()))
+                    .ok(),
+                ImportContestError::XmlDecode(e) => Response::build()
+                    .header(ContentType::Plain)
+                    .sized_body(Cursor::new(e.to_string()))
+                    .ok(),
+                ImportContestError::Io(e) => Response::build()
+                    .header(ContentType::Plain)
+                    .sized_body(Cursor::new(e.to_string()))
+                    .ok(),
             }
         }
     }
@@ -46,19 +46,22 @@ pub use error::ImportContestError;
 
 mod xml {
     use prelude::*;
-    use quick_xml::de::{from_str};
+    use quick_xml::de::from_str;
 
-    pub fn get_from_zip<T: for<'de> Deserialize<'de>, R: Read + Seek>(zip: &mut ZipArchive<R>, path: &str) -> Result<T, ImportContestError> {
+    pub fn get_from_zip<T: for<'de> Deserialize<'de>, R: Read + Seek>(
+        zip: &mut ZipArchive<R>,
+        path: &str,
+    ) -> Result<T, ImportContestError> {
         let xml = super::read_string_from_zip_by_name(&mut *zip, path)?;
         let deserialized: T = from_str(&xml)?;
         Ok(deserialized)
     }
 
     pub mod prelude {
-        pub use serde::Deserialize;
-        pub use zip::ZipArchive;
-        pub use std::io::{Read, Seek};
         pub use super::super::ImportContestError;
+        pub use serde::Deserialize;
+        pub use std::io::{Read, Seek};
+        pub use zip::ZipArchive;
     }
 
     pub mod contest {
@@ -93,7 +96,9 @@ mod xml {
             pub url: String,
         }
 
-        pub fn get_from_zip<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Contest, ImportContestError> {
+        pub fn get_from_zip<R: Read + Seek>(
+            zip: &mut ZipArchive<R>,
+        ) -> Result<Contest, ImportContestError> {
             super::get_from_zip::<Contest, R>(&mut *zip, "contest.xml")
         }
     }
@@ -139,7 +144,7 @@ mod xml {
             pub language: String,
             pub mathjax: Option<bool>,
             pub path: String,
-            pub r#type: String
+            pub r#type: String,
         }
 
         #[derive(Deserialize, Debug)]
@@ -168,7 +173,7 @@ mod xml {
             pub input_path_pattern: InputPathPattern,
             #[serde(rename = "answer-path-pattern")]
             pub answer_path_pattern: AnswerPathPattern,
-            pub tests: Tests
+            pub tests: Tests,
         }
 
         #[derive(Deserialize, Debug)]
@@ -232,7 +237,7 @@ mod xml {
 
         #[derive(Deserialize, Debug)]
         pub struct Executables {
-            pub executable: Vec<Executable>
+            pub executable: Vec<Executable>,
         }
 
         #[derive(Deserialize, Debug)]
@@ -278,7 +283,7 @@ mod xml {
             pub input_path_pattern: InputPathPattern,
             #[serde(rename = "answer-path-pattern")]
             pub answer_path_pattern: AnswerPathPattern,
-            pub tests: VerdictTests
+            pub tests: VerdictTests,
         }
 
         #[derive(Deserialize, Debug)]
@@ -304,7 +309,7 @@ mod xml {
             pub test_count: TestCount,
             #[serde(rename = "input-path-pattern")]
             pub input_path_pattern: InputPathPattern,
-            pub tests: VerdictTests
+            pub tests: VerdictTests,
         }
 
         #[derive(Deserialize, Debug)]
@@ -346,13 +351,11 @@ mod xml {
             pub stress_count: String,
             #[serde(rename = "stress-path-pattern")]
             pub stress_path_pattern: String,
-            pub list: StressList
+            pub list: StressList,
         }
 
         #[derive(Deserialize, Debug)]
-        pub struct StressList {
-
-        }
+        pub struct StressList {}
 
         #[derive(Deserialize, Debug)]
         pub struct Tags {
@@ -364,13 +367,19 @@ mod xml {
             pub value: String,
         }
 
-        pub fn get_from_zip<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Problem, ImportContestError> {
+        pub fn get_from_zip<R: Read + Seek>(
+            zip: &mut ZipArchive<R>,
+            name: &str,
+        ) -> Result<Problem, ImportContestError> {
             super::get_from_zip::<Problem, R>(&mut *zip, name)
         }
     }
 }
 
-fn read_string_from_zip_by_name<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<String, ImportContestError> {
+fn read_string_from_zip_by_name<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    name: &str,
+) -> Result<String, ImportContestError> {
     let mut content = String::new();
     zip.by_name(name)?.read_to_string(&mut content)?;
     Ok(content)
@@ -386,7 +395,12 @@ pub fn import_file<R: Read + Seek>(reader: R) -> Result<String, ImportContestErr
     report.push_str("\n---\n");
 
     let problem_xml_path_regex = Regex::new(r"^problems/.*/problem.xml$").unwrap();
-    for name in zip.file_names().filter(|name| problem_xml_path_regex.is_match(name)).map(|s| s.to_string()).collect::<Vec<_>>() {
+    for name in zip
+        .file_names()
+        .filter(|name| problem_xml_path_regex.is_match(name))
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+    {
         report.push_str(&name);
         let problem = xml::problem::get_from_zip(&mut zip, &name)?;
         report.push_str("\n---\n");

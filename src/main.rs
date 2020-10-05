@@ -4,20 +4,20 @@
 #[macro_use]
 extern crate diesel;
 
-use rocket::{get, routes};
-use rocket_contrib::{database, databases};
 use rocket::response::status::NotFound;
+use rocket::{get, routes};
 use rocket_contrib::json::Json;
 use rocket_contrib::serve::StaticFiles;
+use rocket_contrib::{database, databases};
 use serde::Serialize;
 
 use models::user;
 use models::user::User;
 
+mod import_contest;
 mod models;
 mod schema;
 mod setup;
-mod import_contest;
 
 #[database("default")]
 struct DbConnection(databases::diesel::SqliteConnection);
@@ -29,7 +29,9 @@ struct UserResponse {
 
 #[get("/users")]
 fn get_users(connection: DbConnection) -> Result<Json<UserResponse>, NotFound<String>> {
-    user::get_users(&connection).map(|users| Json(UserResponse { users })).map_err(|e| NotFound(e.to_string()))
+    user::get_users(&connection)
+        .map(|users| Json(UserResponse { users }))
+        .map_err(|e| NotFound(e.to_string()))
 }
 
 use std::fs::File;

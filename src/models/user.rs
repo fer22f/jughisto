@@ -22,9 +22,8 @@ pub struct User {
     pub name: String,
     pub is_admin: bool,
 }
-const USER_COLUMNS: (
-    user_column::id, user_column::name, user_column::is_admin
-) = (user_column::id, user_column::name, user_column::is_admin);
+const USER_COLUMNS: (user_column::id, user_column::name, user_column::is_admin) =
+    (user_column::id, user_column::name, user_column::is_admin);
 
 #[derive(Insertable)]
 #[table_name = "user"]
@@ -100,7 +99,5 @@ pub fn insert_new_user(
 }
 
 pub fn get_users(connection: &SqliteConnection) -> QueryResult<Vec<User>> {
-    user_table
-        .select(USER_COLUMNS)
-        .load::<User>(connection)
+    user_table.select(USER_COLUMNS).load::<User>(connection)
 }
