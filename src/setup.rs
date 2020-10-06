@@ -42,3 +42,8 @@ pub fn setup_admin(connection: &SqliteConnection) {
         }
     }
 }
+
+pub fn get_isolate_executable_path() -> std::path::PathBuf {
+    use which::which;
+    which("isolate").expect("isolate binary not installed")
+}
