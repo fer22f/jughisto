@@ -1,5 +1,5 @@
 use crate::language;
-use crossbeam::channel::{unbounded, Sender, Receiver};
+use crossbeam::channel::{unbounded, Receiver, Sender};
 use std::thread;
 use uuid::Uuid;
 
@@ -24,10 +24,8 @@ pub fn setup_workers(
     languages: HashMap<String, LanguageParams>,
 ) -> (Sender<Submission>, Receiver<SubmissionCompletion>) {
     let (sender, receiver) = unbounded::<Submission>();
-    let (
-        submission_completion_sender,
-        submission_completion_receiver
-    ) = unbounded::<SubmissionCompletion>();
+    let (submission_completion_sender, submission_completion_receiver) =
+        unbounded::<SubmissionCompletion>();
 
     thread::spawn({
         let channel = receiver.clone();
@@ -63,8 +61,8 @@ pub fn setup_workers(
                         last_stderr = stderr;
                     }
 
-                    submission_completion_sender.send(
-                        SubmissionCompletion {
+                    submission_completion_sender
+                        .send(SubmissionCompletion {
                             uuid: submission.uuid.to_string(),
                             verdict: "CE".into(),
                             judge_start_instant,
@@ -73,8 +71,8 @@ pub fn setup_workers(
                             time_ms: None,
                             time_wall_ms: None,
                             compilation_stderr: Some(last_stderr),
-                        },
-                    ).expect("Couldn't send back submission completion");
+                        })
+                        .expect("Couldn't send back submission completion");
 
                     continue;
                 }
@@ -92,8 +90,8 @@ pub fn setup_workers(
 
                 let judge_end_instant = Local::now().naive_local();
 
-                submission_completion_sender.send(
-                    SubmissionCompletion {
+                submission_completion_sender
+                    .send(SubmissionCompletion {
                         uuid: submission.uuid.to_string(),
                         verdict: match execute_stats.status {
                             RunStatus::Ok => "AC",
@@ -110,8 +108,8 @@ pub fn setup_workers(
                         time_ms: execute_stats.time_ms,
                         time_wall_ms: execute_stats.time_wall_ms,
                         compilation_stderr: None,
-                    },
-                ).expect("Coudln't send back submission completion");
+                    })
+                    .expect("Coudln't send back submission completion");
             }
         }
     });

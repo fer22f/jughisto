@@ -59,7 +59,7 @@ where
 
 const WALL_TIME: i32 = 50_000;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum RunStatus {
     Ok,
     TimeLimitExceeded,
@@ -127,7 +127,7 @@ where
     let output = Command::new(isolate_executable_path)
         .current_dir(&isolate_box.path)
         .arg("--run")
-        // .arg("--cg")
+        .arg("--cg")
         .arg(format!("--box-id={}", isolate_box.id))
         .arg(format!(
             "--wall-time={}.{:03}",
@@ -219,16 +219,29 @@ where
                         "RE" => RunStatus::RuntimeError,
                         "TO" => RunStatus::TimeLimitExceeded,
                         "XX" => RunStatus::FailedToStart,
-                        "SG" => match stats.status {
-                            RunStatus::MemoryLimitExceeded => RunStatus::MemoryLimitExceeded,
-                            _ => RunStatus::Signal,
-                        },
+                        "SG" => {
+                            if stats.status == RunStatus::Ok {
+                                RunStatus::Signal
+                            } else {
+                                stats.status
+                            }
+                        }
                         _ => RunStatus::RuntimeError,
                     }
                 }
                 _ => {}
             }
         }
+    }
+
+    if stats.status == RunStatus::Signal
+        && stats.exit_signal == Some(6)
+        && match stats.memory_kib {
+            Some(memory_kib) => memory_kib >= run_params.memory_limit_mib * 1024,
+            _ => false,
+        }
+    {
+        stats.status = RunStatus::MemoryLimitExceeded;
     }
 
     Ok(stats)
