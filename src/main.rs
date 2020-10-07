@@ -150,13 +150,13 @@ struct SubmissionForm {
 }
 
 use language::LanguageParams;
-use queue::{enqueue_submission, Submission, SubmissionQueue};
+use queue::Submission;
 use rocket::State;
 use std::collections::HashMap;
-use std::sync::Arc;
+use crossbeam_channel::Sender;
 
 struct SubmissionState {
-    queue: Arc<SubmissionQueue>,
+    channel: Sender<Submission>,
     languages: HashMap<String, LanguageParams>,
 }
 
@@ -181,14 +181,15 @@ fn create_submission(
             ) {
                 return Flash::error(Redirect::to("/"), "Falha ao submeter");
             }
-            enqueue_submission(
-                &submission_state.queue,
+            if let Err(_) = submission_state.channel.send(
                 Submission {
                     uuid,
                     language: (&form.language).into(),
                     source_text: (&form.source_text).into(),
                 },
-            );
+            ) {
+                return Flash::error(Redirect::to("/"), "Falha ao submeter");
+            }
             Flash::success(
                 Redirect::to("/"),
                 format!("Submetido {} com sucesso!", uuid),
@@ -258,7 +259,7 @@ fn main() {
 
     let isolate_executable_path = setup::get_isolate_executable_path();
     let languages = language::get_supported_languages();
-    let queue = queue::setup_workers(isolate_executable_path, languages);
+    let channel = queue::setup_workers(isolate_executable_path, languages);
     let languages = language::get_supported_languages();
 
     rocket::ignite()
@@ -303,6 +304,6 @@ fn main() {
             );
         }))
         .register(catchers![unauthorized])
-        .manage(SubmissionState { queue, languages })
+        .manage(SubmissionState { channel, languages })
         .launch();
 }

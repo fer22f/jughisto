@@ -1,8 +1,5 @@
 use crate::language;
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::sync::Condvar;
-use std::sync::Mutex;
+use crossbeam_channel::{unbounded, Sender};
 use std::thread;
 use uuid::Uuid;
 
@@ -10,27 +7,6 @@ pub struct Submission {
     pub uuid: Uuid,
     pub language: String,
     pub source_text: String,
-}
-
-pub struct SubmissionQueue {
-    jobs: Mutex<VecDeque<Submission>>,
-    cvar: Condvar,
-}
-
-pub fn enqueue_submission(queue: &SubmissionQueue, submission: Submission) {
-    let mut jobs = queue.jobs.lock().unwrap();
-    jobs.push_back(submission);
-    queue.cvar.notify_all();
-}
-
-pub fn wait_for_submissions(queue: &SubmissionQueue) -> Submission {
-    let mut jobs = queue.jobs.lock().unwrap();
-    loop {
-        match jobs.pop_front() {
-            Some(job) => return job,
-            None => jobs = queue.cvar.wait(jobs).unwrap(),
-        }
-    }
 }
 
 use crate::isolate;
@@ -48,20 +24,17 @@ use std::path::PathBuf;
 pub fn setup_workers(
     isolate_executable_path: PathBuf,
     languages: HashMap<String, LanguageParams>,
-) -> Arc<SubmissionQueue> {
-    let submission_queue = Arc::new(SubmissionQueue {
-        jobs: Mutex::new(VecDeque::new()),
-        cvar: Condvar::new(),
-    });
+) -> Sender<Submission> {
+    let (sender, receiver) = unbounded::<Submission>();
 
     thread::spawn({
-        let submission_queue = submission_queue.clone();
+        let channel = receiver.clone();
         move || {
             let connection = setup::establish_connection();
             let isolate_box =
                 isolate::create_box(&isolate_executable_path, 0).expect("Couldn't create box");
             loop {
-                let submission = wait_for_submissions(&submission_queue);
+                let submission = channel.recv().expect("Failed to recv in queue channel");
 
                 let judge_start_instant = Local::now().naive_local();
 
@@ -148,5 +121,5 @@ pub fn setup_workers(
         }
     });
 
-    return submission_queue.clone();
+    return sender.clone();
 }

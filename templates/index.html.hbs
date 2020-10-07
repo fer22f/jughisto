@@ -169,7 +169,7 @@ int main() {
       const response = await fetch("/submissions");
       submissions.innerHTML = await response.text();
     }
-    setInterval(fetchSubmissions, 5000);
+    setInterval(fetchSubmissions, 1000);
     fetchSubmissions();
   </script>
 </body>
