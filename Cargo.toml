@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 rocket = "0.4.5"
 diesel = { version = "1.4.5", features = ["sqlite"] }
-rocket_contrib = { version = "0.4.5", default-features = false, features = ["json", "serve", "diesel_sqlite_pool", "uuid"] }
+rocket_contrib = { version = "0.4.5", default-features = false, features = ["json", "serve", "diesel_sqlite_pool", "uuid", "handlebars_templates"] }
 serde = { version = "1.0.116", features = ["derive"] }
 dotenv = "0.15.0"
 rust-argon2 = "0.8"
@@ -18,3 +18,4 @@ thiserror = "1.0"
 quick-xml = { version = "0.19.0", features = ["serialize"] }
 regex = "1"
 which = "4.0.2"
+serde_json = "1.0"

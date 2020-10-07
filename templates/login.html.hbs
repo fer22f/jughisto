@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<head>
+  <title>Juĝisto · Entrar</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+  <style>
+html, body {
+  align-items: center;
+  justify-content: center;
+}
+  </style>
+</head>
+<body>
+  <div id="title">Juĝisto</div>
+  <form type="submit" method="post" action="/login" id="login-form">
+    {{ #if flash_message }}
+    <div id="login-info" class="info">
+      {{ flash_message }}
+    </div>
+    {{ /if }}
+    <label for="name">
+      Usuário
+    </label>
+    <input required type="text" id="name" name="name">
+    <label for="password">
+      Senha
+    </label>
+    <input required type="password" id="password" name="password"/>
+    <button type="submit">
+      Entrar
+    </button>
+  </form>
+</body>

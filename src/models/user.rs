@@ -54,18 +54,31 @@ pub enum UserHashingError {
     Hash(#[from] argon2::Error),
 }
 
+pub enum PasswordMatched {
+    UserDoesntExist,
+    PasswordDoesntMatch,
+    PasswordMatches,
+}
+
 pub fn check_matching_password(
     connection: &SqliteConnection,
     name: &str,
     password: &str,
-) -> Result<bool, UserHashingError> {
-    let user = user_table
+) -> Result<PasswordMatched, UserHashingError> {
+    match user_table
         .filter(user_column::name.eq(name))
-        .first::<UserWithHashedPassword>(connection)?;
-    Ok(argon2::verify_encoded(
-        &user.hashed_password,
-        password.as_bytes(),
-    )?)
+        .first::<UserWithHashedPassword>(connection)
+        .optional()?
+    {
+        Some(user) => Ok(
+            if argon2::verify_encoded(&user.hashed_password, password.as_bytes())? {
+                PasswordMatched::PasswordMatches
+            } else {
+                PasswordMatched::PasswordDoesntMatch
+            },
+        ),
+        None => Ok(PasswordMatched::UserDoesntExist),
+    }
 }
 
 pub fn insert_new_user(

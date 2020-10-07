@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<head>
+  <title>Juĝisto</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+</head>
+<body>
+  <form method="post" action="/submissions">
+    <label for="language">
+      Linguagem:
+    </label>
+    <select id="language" name="language">
+      {{ #each languages }}
+      <option value="{{ this }}">{{ this }}</option>
+      {{ /each }}
+    </select>
+    <label for="code">Código-fonte</label>
+    <textarea id="source_text" name="source_text">
+#include &lt;bits/stdc++.h&gt;
+using namespace std;
+
+int main() {
+
+}</textarea>
+    <input type="file" id="source_file"/>
+    <button type="submit">
+      Submeter Solução
+    </button>
+  </form>
+
+  <script>
+    const source_file = document.body.querySelector("#source_file");
+    const source_text = document.body.querySelector("#source_text");
+    source_file.addEventListener("change", async function (e) {
+      source_text.value = await source_file.files[0].text();
+      source_file.value = "";
+    });
+  </script>
+</body>

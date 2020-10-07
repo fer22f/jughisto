@@ -1,3 +1,4 @@
+use crate::language;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -7,8 +8,16 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum CommandError {
-    #[error(transparent)]
-    Io(#[from] io::Error),
+    #[error("couldn't open stdout")]
+    StdoutIo(#[source] io::Error),
+    #[error("couldn't open stdout")]
+    StderrIo(#[source] io::Error),
+    #[error("couldn't get command output")]
+    CommandIo(#[source] io::Error),
+    #[error("couldn't copy file")]
+    CopyIo(#[source] io::Error),
+    #[error("{0}")]
+    IsolateCommandFailed(String),
     #[error(transparent)]
     Utf8(#[from] str::Utf8Error),
     #[error("Couldn't convert path to string")]
@@ -25,8 +34,10 @@ pub fn create_box(isolate_executable_path: &PathBuf, id: u32) -> Result<IsolateB
 
     let process = Command::new(isolate_executable_path)
         .arg("--init")
+        .arg("--cg")
         .arg(format!("--box-id={}", id))
-        .output()?;
+        .output()
+        .map_err(CommandError::CommandIo)?;
 
     Ok(IsolateBox {
         id,
@@ -34,53 +45,91 @@ pub fn create_box(isolate_executable_path: &PathBuf, id: u32) -> Result<IsolateB
     })
 }
 
-pub struct RunParams {
+use std::ffi::OsStr;
+
+pub struct RunParams<I, S>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     pub memory_limit_mib: u32,
     pub time_limit_ms: u32,
-    pub binary_path: PathBuf,
-    pub stdin: PathBuf,
+    pub stdin: bool,
+    pub restricted: bool,
+    pub command: I,
 }
 
-const WALL_TIME: u32 = 10000;
+const WALL_TIME: u32 = 10_000;
 
 #[derive(Debug)]
-pub enum Status {
+pub enum RunStatus {
     Ok,
     TimeLimitExceeded,
+    MemoryLimitExceeded,
     RuntimeError,
     Signal,
     FailedToStart,
 }
 
+use std::io::Read;
+
 #[derive(Debug)]
-pub struct RunStats {
+pub struct RunStats<R: Read> {
     pub time_ms: Option<u32>,
     pub time_wall_ms: Option<u32>,
     pub memory_kib: Option<u32>,
     pub exit_code: Option<u32>,
     pub message: Option<String>,
-    pub status: Status,
-    pub status_message: Option<String>,
+    pub exit_signal: Option<u32>,
+    pub status: RunStatus,
+    pub stdout: R,
+    pub stderr: R,
+}
+
+pub struct ExecuteParams {
+    pub memory_limit_mib: u32,
+    pub time_limit_ms: u32,
+    pub stdin: PathBuf,
 }
 
 use std::str::FromStr;
 
-pub fn run(
+use std::fs::File;
+
+pub fn execute(
     isolate_executable_path: &PathBuf,
-    isolate_box: IsolateBox,
-    execute_params: RunParams,
-) -> Result<RunStats, CommandError> {
-    fs::copy(execute_params.binary_path, &isolate_box.path.join("exe"))?;
-
+    isolate_box: &IsolateBox,
+    execute_params: &ExecuteParams,
+) -> Result<RunStats<File>, CommandError> {
     let stdin_path = isolate_box.path.join("stdin");
-    fs::copy(execute_params.stdin, &stdin_path)?;
+    fs::copy(&execute_params.stdin, &stdin_path).map_err(CommandError::CopyIo)?;
 
-    let stdout_path = isolate_box.path.join("stdout");
-    let stderr_path = isolate_box.path.join("stderr");
+    run(
+        isolate_executable_path,
+        isolate_box,
+        RunParams {
+            stdin: true,
+            restricted: true,
+            memory_limit_mib: execute_params.memory_limit_mib,
+            time_limit_ms: execute_params.time_limit_ms,
+            command: &["./exe"],
+        },
+    )
+}
 
+pub fn run<I, S>(
+    isolate_executable_path: &PathBuf,
+    isolate_box: &IsolateBox,
+    run_params: RunParams<I, S>,
+) -> Result<RunStats<File>, CommandError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let output = Command::new(isolate_executable_path)
         .current_dir(&isolate_box.path)
         .arg("--run")
+        .arg("--cg")
         .arg(format!("--box-id={}", isolate_box.id))
         .arg(format!(
             "--wall-time={}.{:03}",
@@ -89,23 +138,50 @@ pub fn run(
         ))
         .arg(format!(
             "--time={}.{:03}",
-            execute_params.time_limit_ms / 1000,
-            execute_params.time_limit_ms % 1000
+            run_params.time_limit_ms / 1000,
+            run_params.time_limit_ms % 1000
         ))
         .arg(format!(
-            "--mem={}",
-            /* input is in KiB */ execute_params.memory_limit_mib * 1024
+            "--cg-mem={}",
+            /* input is in KiB */ run_params.memory_limit_mib * 1024
         ))
-        .arg("--stdin=stdin")
+        .args(if run_params.stdin {
+            vec!["--stdin=stdin"]
+        } else {
+            vec![]
+        })
         .arg("--stdout=stdout")
         .arg("--stderr=stderr")
         .arg("--meta=-")
-        .arg("--fsize=0") // Don't write to the disk at all
-        .arg("--no-default-dirs")
-        .arg(format!("--dir=box=./box:rw"))
+        .args(if run_params.restricted {
+            vec![
+                String::from("--no-default-dirs"),
+                format!("--dir=box=./box:rw"),
+                String::from("--fsize=0"), // Don't write to the disk at all
+            ]
+        } else {
+            vec![
+                String::from("--processes=0"),
+                String::from("--env=PATH=/usr/bin/"),
+            ]
+        })
         .arg("--")
-        .arg("./exe")
-        .output()?;
+        .args(run_params.command)
+        .output()
+        .map_err(CommandError::CommandIo)?;
+
+    let stdout_path = isolate_box.path.join("stdout");
+    let stderr_path = isolate_box.path.join("stderr");
+
+    if match output.status.code() {
+        // Ended by signal
+        None => true,
+        Some(c) => c > 1,
+    } {
+        return Err(CommandError::IsolateCommandFailed(String::from(
+            str::from_utf8(&output.stderr)?,
+        )));
+    }
 
     let mut stats = RunStats {
         time_ms: None,
@@ -113,8 +189,10 @@ pub fn run(
         memory_kib: None,
         exit_code: None,
         message: None,
-        status: Status::Ok,
-        status_message: None,
+        exit_signal: None,
+        status: RunStatus::Ok,
+        stdout: File::open(stdout_path).map_err(CommandError::StdoutIo)?,
+        stderr: File::open(stderr_path).map_err(CommandError::StderrIo)?,
     };
 
     fn parse_ms(input: &str) -> Option<u32> {
@@ -133,28 +211,28 @@ pub fn run(
             let key = &line[..colon_index];
             let value = &line[colon_index + 1..];
 
+            println!("{}: {}", key, value);
+
             match key {
                 "time" => stats.time_ms = parse_ms(value),
                 "time-wall" => stats.time_wall_ms = parse_ms(value),
-                "max-rss" => stats.memory_kib = u32::from_str(value).ok(),
+                "cg-mem" => stats.memory_kib = u32::from_str(value).ok(),
+                "cg-oom-killed" => stats.status = RunStatus::MemoryLimitExceeded,
                 "exitcode" => stats.exit_code = u32::from_str(value).ok(),
                 "message" => stats.message = Some(String::from(value)),
+                "exitsig" => stats.exit_signal = u32::from_str(value).ok(),
                 "status" => {
-                    let (code, message) = match value.find('.') {
-                        Some(dot_index) => (&value[..dot_index], Some(&value[dot_index + 1..])),
-                        None => (value, None),
-                    };
-
-                    match code {
+                    stats.status = match value {
                         // TODO: Check if MLE == RE
-                        "RE" => stats.status = Status::RuntimeError,
-                        "TO" => stats.status = Status::TimeLimitExceeded,
-                        "XX" => stats.status = Status::FailedToStart,
-                        "SG" => stats.status = Status::Signal,
-                        _ => {}
+                        "RE" => RunStatus::RuntimeError,
+                        "TO" => RunStatus::TimeLimitExceeded,
+                        "XX" => RunStatus::FailedToStart,
+                        "SG" => match stats.status {
+                            RunStatus::MemoryLimitExceeded => RunStatus::MemoryLimitExceeded,
+                            _ => RunStatus::Signal,
+                        },
+                        _ => RunStatus::RuntimeError,
                     }
-
-                    stats.status_message = message.map(String::from);
                 }
                 _ => {}
             }
@@ -167,51 +245,43 @@ pub fn run(
 pub struct CompileParams<'a> {
     pub memory_limit_mib: u32,
     pub time_limit_ms: u32,
-    pub cmd: &'a [&'a str],
+    pub command: &'a language::Command,
 }
 
 pub fn compile(
     isolate_executable_path: &PathBuf,
-    isolate_box: IsolateBox,
-    execute_params: CompileParams,
-) -> Result<(), CommandError> {
-    let stdout_path = isolate_box.path.join("stdout");
-    let stderr_path = isolate_box.path.join("stderr");
-    let meta_path = isolate_box.path.join("meta");
+    isolate_box: &IsolateBox,
+    compile_params: CompileParams,
+) -> Result<RunStats<File>, CommandError> {
+    let mut command = vec![compile_params.command.binary_path.as_os_str()];
+    let mut args = compile_params
+        .command
+        .args
+        .iter()
+        .map(|s| OsStr::new(s))
+        .collect::<Vec<_>>();
+    command.append(&mut args);
 
-    Command::new(isolate_executable_path)
-        .current_dir(&isolate_box.path)
-        .arg("--run")
-        .arg(format!("--box-id={}", isolate_box.id))
-        .arg(format!(
-            "--wall-time={}.{:03}",
-            WALL_TIME / 1000,
-            WALL_TIME % 1000
-        ))
-        .arg(format!(
-            "--time={}.{:03}",
-            execute_params.time_limit_ms / 1000,
-            execute_params.time_limit_ms % 1000
-        ))
-        .arg(format!(
-            "--mem={}",
-            /* input is in KiB */ execute_params.memory_limit_mib * 1024
-        ))
-        .arg("--stdout=stdout")
-        .arg("--stderr=stderr")
-        .arg("--meta=meta")
-        .arg("--fsize=0") // Don't write to the disk at all
-        .arg("--")
-        .args(execute_params.cmd)
-        .output()?;
-    Ok(())
+    run(
+        isolate_executable_path,
+        isolate_box,
+        RunParams {
+            stdin: false,
+            restricted: false,
+            memory_limit_mib: compile_params.memory_limit_mib,
+            time_limit_ms: compile_params.time_limit_ms,
+            command,
+        },
+    )
 }
 
 pub fn cleanup_box(isolate_executable_path: &PathBuf, box_id: u32) -> Result<bool, CommandError> {
     Ok(Command::new(isolate_executable_path)
         .arg("--cleanup")
+        .arg("--cg")
         .arg(format!("--box-id={}", box_id))
-        .output()?
+        .output()
+        .map_err(CommandError::CommandIo)?
         .status
         .success())
 }
