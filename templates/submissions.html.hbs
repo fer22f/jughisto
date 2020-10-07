@@ -1,0 +1,68 @@
+{{ #each submissions }}
+{{ #if (eq this.verdict "WJ") }}
+<div class="submission waiting-judge">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="lds-hourglass"></div>
+    <div class="verdict">WJ</div> · {{ this.problem }} · {{ this.formatted_date_time }}
+  </div>
+</div>
+{{ /if }}
+{{ #if (eq this.verdict "AC") }}
+<div class="submission accepted">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="verdict">AC</div> · {{ this.problem }} · {{ this.formatted_date_time }}
+  </div>
+</div>
+{{ /if }}
+{{ #if (eq this.verdict "WA") }}
+<div class="submission wrong-answer">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="verdict">WA</div> · {{ this.problem }} · {{ this.formatted_date_time }}
+  </div>
+</div>
+{{ /if }}
+{{ #if (eq this.verdict "RE") }}
+<div class="submission runtime-error">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="verdict">RE</div> · A · 06/10/2020 22:43:43
+  </div>
+</div>
+{{ /if }}
+{{ #if (eq this.verdict "ML") }}
+<div class="submission memory-limit">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="verdict">ML</div> · A · 06/10/2020 22:43:43
+  </div>
+</div>
+{{ /if }}
+{{ #if (eq this.verdict "TL") }}
+<div class="submission time-limit">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="verdict">TL</div> · A · 06/10/2020 22:43:43
+  </div>
+</div>
+{{ /if }}
+{{ #if (eq this.verdict "PE") }}
+<div class="submission presentation-error">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="verdict">PE</div> · A · 06/10/2020 22:43:43
+  </div>
+</div>
+{{ /if }}
+{{ #if (eq this.verdict "CE") }}
+<div class="submission compilation-error">
+  <div class="uuid">{{ this.uuid }}</div>
+  <div class="description">
+    <div class="verdict">CE</div> · A · 06/10/2020 22:43:43
+  </div>
+  <div class="compilation-result">{{ this.compilation_stderr }}</div>
+</div>
+{{ /if }}
+{{ /each }}

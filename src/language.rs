@@ -30,122 +30,118 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
     fn build_gcc_args<'a>(x: &'a str, std: &'a str) -> Vec<String> {
         return vec![
             // Static linked, the judging process has no access to shared libraries
-            String::from("-static"),
+            "-static".into(),
             // ONLINE_JUDGE define as in Codeforces
-            String::from("-DONLINE_JUDGE"),
+            "-DONLINE_JUDGE".into(),
             // Link to the math library
-            String::from("-lm"),
+            "-lm".into(),
             // Strip all symbols
-            String::from("-s"),
+            "-s".into(),
             // Use std
             format!("-std={}", std),
             // Define language used
-            String::from("-x"),
-            String::from(x),
+            "-x".into(),
+            x.into(),
             // Level 2 optimization
-            String::from("-O2"),
+            "-O2".into(),
             // Output to exe
-            String::from("-o"),
-            String::from("exe"),
+            "-o".into(),
+            "exe".into(),
             // Input from source
-            String::from("source"),
+            "source".into(),
         ];
     }
 
     let mut languages = HashMap::new();
     languages.insert(
-        String::from("GCC C99"),
+        "GCC C99".into(),
         LanguageParams {
             compile: Compile::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/gcc"),
+                binary_path: "/usr/bin/gcc".into(),
                 args: build_gcc_args("c", "c99"),
             }]),
             run: Run::RunExe,
         },
     );
     languages.insert(
-        String::from("GCC C11"),
+        "GCC C11".into(),
         LanguageParams {
             compile: Compile::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/gcc"),
+                binary_path: "/usr/bin/gcc".into(),
                 args: build_gcc_args("c", "c11"),
             }]),
             run: Run::RunExe,
         },
     );
     languages.insert(
-        String::from("GCC C14"),
+        "GCC C14".into(),
         LanguageParams {
             compile: Compile::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/gcc"),
+                binary_path: "/usr/bin/gcc".into(),
                 args: build_gcc_args("c", "c14"),
             }]),
             run: Run::RunExe,
         },
     );
     languages.insert(
-        String::from("GCC C++11"),
+        "GCC C++11".into(),
         LanguageParams {
             compile: Compile::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/g++"),
+                binary_path: "/usr/bin/g++".into(),
                 args: build_gcc_args("c++", "c++11"),
             }]),
             run: Run::RunExe,
         },
     );
     languages.insert(
-        String::from("GCC C++14"),
+        "GCC C++14".into(),
         LanguageParams {
             compile: Compile::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/g++"),
+                binary_path: "/usr/bin/g++".into(),
                 args: build_gcc_args("c++", "c++14"),
             }]),
             run: Run::RunExe,
         },
     );
     languages.insert(
-        String::from("GCC C++17"),
+        "GCC C++17".into(),
         LanguageParams {
             compile: Compile::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/g++"),
+                binary_path: "/usr/bin/g++".into(),
                 args: build_gcc_args("c++", "c++17"),
             }]),
             run: Run::RunExe,
         },
     );
     languages.insert(
-        String::from("Java"),
+        "Java".into(),
         LanguageParams {
             compile: Compile::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/javac"),
-                args: vec![
-                    String::from("-cp"),
-                    String::from("\".;*\""),
-                    String::from("source"),
-                ],
+                binary_path: "/usr/bin/javac".into(),
+                args: vec!["-cp".into(), "\".;*\"".into(), "source".into()],
             }]),
             run: Run::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/java"),
+                binary_path: "/usr/bin/java".into(),
                 args: vec![
-                    String::from("-Xmx512M"),
-                    String::from("-Xss64M"),
-                    String::from("-DONLINE_JUDGE=true"),
-                    String::from("-Duser.language=en"),
-                    String::from("-Duser.region=US"),
-                    String::from("-Duser.variant=US"),
-                    String::from("-jar"),
-                    String::from("exe"),
+                    "-Xmx512M".into(),
+                    "-Xss64M".into(),
+                    "-DONLINE_JUDGE=true".into(),
+                    "-Duser.language=en".into(),
+                    "-Duser.region=US".into(),
+                    "-Duser.variant=US".into(),
+                    "-jar".into(),
+                    "exe".into(),
                 ],
             }]),
         },
     );
     languages.insert(
-        String::from("Python 3"),
+        "Python 3".into(),
         LanguageParams {
             compile: Compile::NoCompile,
             run: Run::Commands(vec![Command {
-                binary_path: PathBuf::from("/usr/bin/python3"),
-                args: vec![String::from("source")],
+                binary_path: "/usr/bin/python3".into(),
+                args: vec!["source".into()],
             }]),
         },
     );
@@ -173,7 +169,7 @@ where
                 isolate_executable_path,
                 isolate_box,
                 CompileParams {
-                    memory_limit_mib: 1000,
+                    memory_limit_mib: 1_000,
                     time_limit_ms: 50_000,
                     command,
                 },
@@ -194,8 +190,8 @@ where
 }
 
 pub struct ExecuteParams {
-    pub memory_limit_mib: u32,
-    pub time_limit_ms: u32,
+    pub memory_limit_mib: i32,
+    pub time_limit_ms: i32,
 }
 
 pub fn run(
@@ -211,11 +207,9 @@ pub fn run(
             &isolate::ExecuteParams {
                 memory_limit_mib: execute_params.memory_limit_mib,
                 time_limit_ms: execute_params.time_limit_ms,
-                stdin: PathBuf::from("./data/stdin"),
+                stdin: "./data/stdin".into(),
             },
         ),
-        Run::Commands(_) => Err(CommandError::IsolateCommandFailed(String::from(
-            "Not implemented",
-        ))),
+        Run::Commands(_) => Err(CommandError::IsolateCommandFailed("Not implemented".into())),
     }
 }

@@ -100,7 +100,7 @@ fn post_login(
                 cookies.add_private(Cookie::new(
                     "user",
                     serde_json::to_string(&LoggedUser {
-                        name: String::from(&user.name),
+                        name: (&user.name).into(),
                         is_admin: user.is_admin,
                     })
                     .unwrap(),
@@ -138,7 +138,7 @@ fn get_login(flash_message: Option<FlashMessage>) -> Template {
     Template::render(
         "login",
         LoginContext {
-            flash_message: flash_message.map(|f| String::from(f.msg())),
+            flash_message: flash_message.map(|f| f.msg().into()),
         },
     )
 }
@@ -162,28 +162,99 @@ struct SubmissionState {
 
 #[post("/submissions", data = "<form>")]
 fn create_submission(
+    _user: LoggedUser,
     form: Form<SubmissionForm>,
     submission_state: State<SubmissionState>,
+    connection: DbConnection,
 ) -> Flash<Redirect> {
     match submission_state.languages.get(&form.language) {
         Some(_) => {
+            let uuid = Uuid::new_v4();
+            if let Err(_) = submission::insert_submission(
+                &connection,
+                submission::NewSubmission {
+                    uuid: uuid.to_string(),
+                    source_text: (&form.source_text).into(),
+                    language: (&form.language).into(),
+                    submission_instant: Local::now().naive_local(),
+                },
+            ) {
+                return Flash::error(Redirect::to("/"), "Falha ao submeter");
+            }
             enqueue_submission(
                 &submission_state.queue,
                 Submission {
-                    language: String::from(&form.language),
-                    source_text: String::from(&form.source_text),
+                    uuid,
+                    language: (&form.language).into(),
+                    source_text: (&form.source_text).into(),
                 },
             );
-            Flash::success(Redirect::to("/"), "Submetido com sucesso!")
+            Flash::success(
+                Redirect::to("/"),
+                format!("Submetido {} com sucesso!", uuid),
+            )
         }
         None => Flash::error(Redirect::to("/"), "Linguagem inexistente"),
     }
 }
 
+use chrono::prelude::*;
+use models::submission;
+
+#[get("/submissions")]
+fn get_submissions(_user: LoggedUser, connection: DbConnection) -> Template {
+    #[derive(Serialize)]
+    struct SubmissionResult {
+        uuid: String,
+        verdict: String,
+        problem: String,
+        formatted_date_time: String,
+        compilation_stderr: Option<String>,
+    }
+
+    #[derive(Serialize)]
+    struct SubmissionsContext {
+        submissions: Vec<SubmissionResult>,
+    }
+
+    let submissions = submission::get_submissions(&connection).unwrap();
+
+    Template::render(
+        "submissions",
+        SubmissionsContext {
+            submissions: submissions
+                .iter()
+                .map(|submission| SubmissionResult {
+                    uuid: (&submission.uuid).into(),
+                    verdict: submission
+                        .verdict
+                        .as_ref()
+                        .map(|s| String::from(s))
+                        .unwrap_or("WJ".into())
+                        .to_string(),
+                    problem: "A".into(),
+                    formatted_date_time: submission
+                        .submission_instant
+                        .format("%d/%m/%Y %H:%M:%S")
+                        .to_string(),
+                    compilation_stderr: submission.compilation_stderr.as_ref().map(|s| s.into()),
+                })
+                .collect(),
+        },
+    )
+}
+
+use rocket_contrib::templates::handlebars::{
+    Context, Handlebars, Helper, HelperResult, Output, RenderContext, RenderError,
+};
+use uuid::Uuid;
+
 fn main() {
     setup::setup_dotenv();
-    let connection = setup::establish_connection();
-    setup::setup_admin(&connection);
+    {
+        let connection = setup::establish_connection();
+        setup::setup_admin(&connection);
+    }
 
     let isolate_executable_path = setup::get_isolate_executable_path();
     let languages = language::get_supported_languages();
@@ -193,11 +264,44 @@ fn main() {
     rocket::ignite()
         .mount(
             "/",
-            routes![index, post_login, get_login, create_submission],
+            routes![
+                index,
+                post_login,
+                get_login,
+                create_submission,
+                get_submissions
+            ],
         )
         .mount("/static", StaticFiles::from("./static"))
         .attach(DbConnection::fairing())
-        .attach(Template::fairing())
+        .attach(Template::custom(|engines| {
+            // TODO: When Rocket updates finally, this will be removed
+            // This is needed because rocket_contrib depends on Handlebars 1.0
+            // which doesn't have eq implemented for strings
+            engines.handlebars.register_helper(
+                "eq",
+                Box::new(
+                    |h: &Helper,
+                     _: &Handlebars,
+                     _: &Context,
+                     _: &mut RenderContext,
+                     out: &mut dyn Output|
+                     -> HelperResult {
+                        let f = h
+                            .param(0)
+                            .ok_or(RenderError::new("first param not found"))?;
+                        let s = h
+                            .param(1)
+                            .ok_or(RenderError::new("second param not found"))?;
+
+                        if f.value() == s.value() {
+                            out.write("ok")?;
+                        }
+                        Ok(())
+                    },
+                ),
+            );
+        }))
         .register(catchers![unauthorized])
         .manage(SubmissionState { queue, languages })
         .launch();
