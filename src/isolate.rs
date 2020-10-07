@@ -20,8 +20,6 @@ pub enum CommandError {
     IsolateCommandFailed(String),
     #[error(transparent)]
     Utf8(#[from] str::Utf8Error),
-    #[error("Couldn't convert path to string")]
-    PathToStr(),
 }
 
 pub struct IsolateBox {
@@ -207,8 +205,6 @@ where
         if let Some(colon_index) = line.find(':') {
             let key = &line[..colon_index];
             let value = &line[colon_index + 1..];
-
-            println!("{}: {}", key, value);
 
             match key {
                 "time" => stats.time_ms = parse_ms(value),

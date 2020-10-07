@@ -4,11 +4,7 @@ use zip::ZipArchive;
 
 mod error {
     use quick_xml::de::DeError;
-    use rocket::http::ContentType;
-    use rocket::request::Request;
-    use rocket::response::{self, Responder, Response};
     use std::io;
-    use std::io::Cursor;
     use thiserror::Error;
     use zip::result::ZipError;
 
@@ -20,25 +16,6 @@ mod error {
         XmlDecode(#[from] DeError),
         #[error(transparent)]
         Io(#[from] io::Error),
-    }
-
-    impl<'a> Responder<'a> for ImportContestError {
-        fn respond_to(self, _: &Request) -> response::Result<'a> {
-            match self {
-                ImportContestError::Zip(e) => Response::build()
-                    .header(ContentType::Plain)
-                    .sized_body(Cursor::new(e.to_string()))
-                    .ok(),
-                ImportContestError::XmlDecode(e) => Response::build()
-                    .header(ContentType::Plain)
-                    .sized_body(Cursor::new(e.to_string()))
-                    .ok(),
-                ImportContestError::Io(e) => Response::build()
-                    .header(ContentType::Plain)
-                    .sized_body(Cursor::new(e.to_string()))
-                    .ok(),
-            }
-        }
     }
 }
 

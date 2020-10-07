@@ -1,5 +1,5 @@
 use crate::language;
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam::channel::{unbounded, Sender, Receiver};
 use std::thread;
 use uuid::Uuid;
 
@@ -12,9 +12,7 @@ pub struct Submission {
 use crate::isolate;
 use crate::isolate::RunStatus;
 use crate::language::LanguageParams;
-use crate::models::submission;
 use crate::models::submission::SubmissionCompletion;
-use crate::setup;
 use chrono::prelude::*;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -24,13 +22,16 @@ use std::path::PathBuf;
 pub fn setup_workers(
     isolate_executable_path: PathBuf,
     languages: HashMap<String, LanguageParams>,
-) -> Sender<Submission> {
+) -> (Sender<Submission>, Receiver<SubmissionCompletion>) {
     let (sender, receiver) = unbounded::<Submission>();
+    let (
+        submission_completion_sender,
+        submission_completion_receiver
+    ) = unbounded::<SubmissionCompletion>();
 
     thread::spawn({
         let channel = receiver.clone();
         move || {
-            let connection = setup::establish_connection();
             let isolate_box =
                 isolate::create_box(&isolate_executable_path, 0).expect("Couldn't create box");
             loop {
@@ -62,8 +63,7 @@ pub fn setup_workers(
                         last_stderr = stderr;
                     }
 
-                    submission::complete_submission(
-                        &connection,
+                    submission_completion_sender.send(
                         SubmissionCompletion {
                             uuid: submission.uuid.to_string(),
                             verdict: "CE".into(),
@@ -74,8 +74,7 @@ pub fn setup_workers(
                             time_wall_ms: None,
                             compilation_stderr: Some(last_stderr),
                         },
-                    )
-                    .expect("Failed to update the database");
+                    ).expect("Couldn't send back submission completion");
 
                     continue;
                 }
@@ -91,12 +90,9 @@ pub fn setup_workers(
                 )
                 .expect("Crashed while running");
 
-                println!("{:#?}", execute_stats);
-
                 let judge_end_instant = Local::now().naive_local();
 
-                submission::complete_submission(
-                    &connection,
+                submission_completion_sender.send(
                     SubmissionCompletion {
                         uuid: submission.uuid.to_string(),
                         verdict: match execute_stats.status {
@@ -115,11 +111,10 @@ pub fn setup_workers(
                         time_wall_ms: execute_stats.time_wall_ms,
                         compilation_stderr: None,
                     },
-                )
-                .expect("Failed to update the database");
+                ).expect("Coudln't send back submission completion");
             }
         }
     });
 
-    return sender.clone();
+    (sender, submission_completion_receiver)
 }

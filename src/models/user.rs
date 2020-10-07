@@ -57,7 +57,7 @@ pub enum UserHashingError {
 pub enum PasswordMatched {
     UserDoesntExist,
     PasswordDoesntMatch,
-    PasswordMatches,
+    PasswordMatches(QueryResult<User>),
 }
 
 pub fn check_matching_password(
@@ -72,7 +72,7 @@ pub fn check_matching_password(
     {
         Some(user) => Ok(
             if argon2::verify_encoded(&user.hashed_password, password.as_bytes())? {
-                PasswordMatched::PasswordMatches
+                PasswordMatched::PasswordMatches(get_user_by_name(&connection, &name))
             } else {
                 PasswordMatched::PasswordDoesntMatch
             },

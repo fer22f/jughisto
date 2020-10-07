@@ -6,21 +6,25 @@ use std::io;
 use std::io::Read;
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct Command {
     pub binary_path: PathBuf,
     pub args: Vec<String>,
 }
 
+#[derive(Clone)]
 pub enum Run {
     RunExe,
     Commands(Vec<Command>),
 }
 
+#[derive(Clone)]
 pub enum Compile {
     NoCompile,
     Commands(Vec<Command>),
 }
 
+#[derive(Clone)]
 pub struct LanguageParams {
     compile: Compile,
     run: Run,

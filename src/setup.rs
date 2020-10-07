@@ -1,20 +1,12 @@
-use diesel::sqlite::SqliteConnection;
-use diesel::Connection;
 use dotenv::dotenv;
-use std::env;
 use which::which;
 
 use crate::models::user;
 use crate::models::user::NewUser;
+use diesel::SqliteConnection;
 
 pub fn setup_dotenv() {
     dotenv().expect(".env should work");
-}
-
-pub fn establish_connection() -> SqliteConnection {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    SqliteConnection::establish(&database_url)
-        .expect(&format!("Error connecting to {}", database_url))
 }
 
 pub fn setup_admin(connection: &SqliteConnection) {
@@ -38,7 +30,7 @@ pub fn setup_admin(connection: &SqliteConnection) {
             )
             .expect("Error saving new user");
         }
-        PasswordMatched::PasswordMatches => {
+        PasswordMatched::PasswordMatches(_) => {
             println!("Admin already created and is using default password.",)
         }
         PasswordMatched::PasswordDoesntMatch => {

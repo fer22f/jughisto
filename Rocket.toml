@@ -1,3 +1,0 @@
-[global.databases.default]
-url = "db.sqlite"
-pool_size = 20
