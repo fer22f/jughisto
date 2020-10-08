@@ -17,7 +17,8 @@ pub struct Submission {
     pub time_ms: Option<i32>,
     pub time_wall_ms: Option<i32>,
     pub compilation_stderr: Option<String>,
-    pub problem_id: Option<i32>,
+    pub problem_id: i32,
+    pub user_id: i32,
 }
 
 #[table_name = "submission"]

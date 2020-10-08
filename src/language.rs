@@ -26,6 +26,7 @@ pub enum Compile {
 
 #[derive(Clone)]
 pub struct LanguageParams {
+    name: String,
     compile: Compile,
     run: Run,
 }
@@ -58,8 +59,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
 
     let mut languages = HashMap::new();
     languages.insert(
-        "GCC C99".into(),
+        "c99.gcc".into(),
         LanguageParams {
+            name: "GCC C99".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/gcc".into(),
                 args: build_gcc_args("c", "c99"),
@@ -68,8 +70,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
         },
     );
     languages.insert(
-        "GCC C11".into(),
+        "c11.gcc".into(),
         LanguageParams {
+            name: "GCC C11".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/gcc".into(),
                 args: build_gcc_args("c", "c11"),
@@ -78,8 +81,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
         },
     );
     languages.insert(
-        "GCC C14".into(),
+        "c.gcc".into(),
         LanguageParams {
+            name: "GCC C18".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/gcc".into(),
                 args: build_gcc_args("c", "c14"),
@@ -88,8 +92,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
         },
     );
     languages.insert(
-        "GCC C++11".into(),
+        "cpp.g++11".into(),
         LanguageParams {
+            name: "GCC C++11".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/g++".into(),
                 args: build_gcc_args("c++", "c++11"),
@@ -98,8 +103,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
         },
     );
     languages.insert(
-        "GCC C++14".into(),
+        "cpp.g++14".into(),
         LanguageParams {
+            name: "GCC C++14".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/g++".into(),
                 args: build_gcc_args("c++", "c++14"),
@@ -108,8 +114,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
         },
     );
     languages.insert(
-        "GCC C++17".into(),
+        "cpp.g++17".into(),
         LanguageParams {
+            name: "GCC C++17".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/g++".into(),
                 args: build_gcc_args("c++", "c++17"),
@@ -118,8 +125,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
         },
     );
     languages.insert(
-        "Java".into(),
+        "java8".into(),
         LanguageParams {
+            name: "Java 8".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/javac".into(),
                 args: vec!["-cp".into(), "\".;*\"".into(), "source".into()],
@@ -140,8 +148,9 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
         },
     );
     languages.insert(
-        "Python 3".into(),
+        "python.3".into(),
         LanguageParams {
+            name: "Python 3".into(),
             compile: Compile::NoCompile,
             run: Run::Commands(vec![Command {
                 binary_path: "/usr/bin/python3".into(),

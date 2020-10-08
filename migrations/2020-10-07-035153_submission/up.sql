@@ -10,5 +10,6 @@ CREATE TABLE submission (
   time_ms integer null,
   time_wall_ms integer null,
   compilation_stderr text null,
-  problem_id integer references problem(id) null
+  problem_id integer references problem(id) not null,
+  user_id integer references user(id) not null
 )

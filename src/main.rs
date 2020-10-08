@@ -98,6 +98,8 @@ async fn main() -> io::Result<()> {
             .service(index)
             .service(get_submissions)
             .service(create_submission)
+            .service(manage_contests)
+            .service(create_contest)
             .service(Files::new("/static/", "./static/"))
     })
     .bind("localhost:8000")?
@@ -334,4 +336,107 @@ async fn create_submission(
             "/",
         )),
     }
+}
+
+#[get("/manage/contests")]
+async fn manage_contests(
+    id: Identity,
+    hb: web::Data<Handlebars<'_>>,
+) -> HttpResponse {
+    if let None = id.identity() {
+        return HttpResponse::Unauthorized().finish();
+    }
+
+    HttpResponse::Ok().body(
+        hb.render(
+            "manage_contests",
+            &json!({
+                "contents": [
+                    { "id": 1, "name": "Plano B", "formatted_start_instant": "1", "formatted_end_instant": "2" }
+                ]
+            })
+        ).unwrap()
+    )
+}
+
+use actix_multipart::Multipart;
+use futures::TryStreamExt;
+use std::io::Cursor;
+use futures::StreamExt;
+use std::io::Write;
+use std::io::Read;
+use std::str;
+
+#[post("/manage/contests")]
+async fn create_contest(
+    id: Identity,
+    mut payload: Multipart,
+) -> Result<Either<actix_flash::Response<HttpResponse, String>, HttpResponse>, io::Error> {
+    if let None = id.identity() {
+        return Ok(Either::B(HttpResponse::Unauthorized().finish()));
+    }
+
+    #[derive(Debug)]
+    struct NewContest {
+        name: Option<String>,
+        start_instant: Option<String>,
+        end_instant: Option<String>,
+        polygon_zip: Option<Cursor<Vec<u8>>>
+    }
+
+    let mut new_contest = NewContest {
+        name: None,
+        start_instant: None,
+        end_instant: None,
+        polygon_zip: None,
+    };
+
+    let mut result = String::new();
+    while let Ok(Some(mut field)) = payload.try_next().await {
+        let mut cursor = Cursor::new(vec!());
+        while let Some(chunk) = field.next().await {
+            let data = chunk.unwrap();
+            match cursor.write(&data) {
+                Err(_) => return Ok(Either::A(actix_flash::Response::with_redirect(
+                    String::from("Ocorreu um erro na importação"),
+                    "/manage/contest",
+                ))),
+                _ => {}
+            }
+        }
+
+        cursor.set_position(0);
+
+        match field.content_disposition().unwrap().get_name() {
+            Some("name") => {
+                let mut name = String::new();
+                cursor.read_to_string(&mut name)?;
+                new_contest.name = Some(name);
+            },
+            Some("start_instant") => {
+                let mut start_instant = String::new();
+                cursor.read_to_string(&mut start_instant)?;
+                new_contest.start_instant = Some(start_instant);
+            },
+            Some("end_instant") => {
+                let mut end_instant = String::new();
+                cursor.read_to_string(&mut end_instant)?;
+                new_contest.end_instant = Some(end_instant);
+            },
+            Some("polygon_zip") => new_contest.polygon_zip = Some(cursor),
+            _ => {}
+        }
+    }
+
+    if let Some(polygon_zip) = new_contest.polygon_zip {
+        match import_contest::import_file(polygon_zip) {
+            Ok(s) => result.push_str(&s),
+            _ => return Ok(Either::A(actix_flash::Response::with_redirect(
+                String::from("Ocorreu um erro na importação"),
+                "/manage/contest",
+            ))),
+        }
+    }
+
+    Ok(Either::B(HttpResponse::Ok().body(result)))
 }

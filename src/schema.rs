@@ -29,7 +29,8 @@ table! {
         time_ms -> Nullable<Integer>,
         time_wall_ms -> Nullable<Integer>,
         compilation_stderr -> Nullable<Text>,
-        problem_id -> Nullable<Integer>,
+        problem_id -> Integer,
+        user_id -> Integer,
     }
 }
 
@@ -44,5 +45,11 @@ table! {
 
 joinable!(problem -> contest (contest_id));
 joinable!(submission -> problem (problem_id));
+joinable!(submission -> user (user_id));
 
-allow_tables_to_appear_in_same_query!(contest, problem, submission, user,);
+allow_tables_to_appear_in_same_query!(
+    contest,
+    problem,
+    submission,
+    user,
+);
