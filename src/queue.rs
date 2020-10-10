@@ -1,8 +1,8 @@
 use crate::language;
 use crossbeam::channel::{unbounded, Receiver, Sender};
+use log::info;
 use std::thread;
 use uuid::Uuid;
-use log::{info};
 
 pub struct Submission {
     pub uuid: Uuid,
@@ -19,10 +19,11 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub fn setup_workers(
     isolate_executable_path: PathBuf,
-    languages: HashMap<String, LanguageParams>,
+    languages: Arc<HashMap<String, LanguageParams>>,
 ) -> (Sender<Submission>, Receiver<SubmissionCompletion>) {
     let (sender, receiver) = unbounded::<Submission>();
     let (submission_completion_sender, submission_completion_receiver) =
@@ -47,7 +48,7 @@ pub fn setup_workers(
                     &mut Cursor::new(submission.source_text),
                 )
                 .expect("Crashed while compiling");
-                info!("Compile finished");
+                info!("Compile finished: {:#?}", compile_stats);
 
                 if match compile_stats.last().unwrap().exit_code {
                     Some(c) => c != 0,
@@ -59,8 +60,10 @@ pub fn setup_workers(
 
                     for stats in compile_stats {
                         let mut stderr_file = stats.stderr;
+                        let mut stdout_file = stats.stdout;
                         let mut stderr = String::new();
                         stderr_file.read_to_string(&mut stderr).unwrap_or(0);
+                        stdout_file.read_to_string(&mut stderr).unwrap_or(0);
                         last_stderr = stderr;
                     }
 

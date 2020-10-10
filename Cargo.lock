@@ -1317,6 +1317,7 @@ dependencies = [
  "env_logger",
  "futures",
  "handlebars",
+ "lazy_static",
  "libsqlite3-sys",
  "listenfd",
  "log",

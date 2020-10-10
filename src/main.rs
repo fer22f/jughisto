@@ -14,8 +14,8 @@ use std::env;
 use std::io;
 use uuid::Uuid;
 
-use actix_session::{CookieSession, Session};
 use actix_identity::{CookieIdentityPolicy, IdentityService};
+use actix_session::{CookieSession, Session};
 use actix_web::HttpResponse;
 use chrono::prelude::*;
 use diesel::r2d2::ConnectionManager;
@@ -23,6 +23,7 @@ use handlebars::Handlebars;
 use models::submission;
 use models::user;
 
+mod broadcaster;
 mod import_contest;
 mod isolate;
 mod language;
@@ -30,12 +31,11 @@ mod models;
 mod queue;
 mod schema;
 mod setup;
-mod broadcaster;
 
-use listenfd::ListenFd;
-use std::thread;
 use broadcaster::Broadcaster;
+use listenfd::ListenFd;
 use std::sync::Mutex;
+use std::thread;
 type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 use std::time::Duration;
 
@@ -43,7 +43,8 @@ use std::time::Duration;
 async fn main() -> io::Result<()> {
     setup::setup_dotenv();
 
-    std::env::set_var("RUST_LOG", "actix_web=info,*=info");
+    // std::env::set_var("RUST_LOG", "actix_web=info,*=info");
+    std::env::set_var("RUST_LOG", "info");
     env_logger::init();
 
     let private_key = env::var("IDENTITY_SECRET_KEY")
@@ -69,7 +70,7 @@ async fn main() -> io::Result<()> {
     let isolate_executable_path = setup::get_isolate_executable_path();
     let languages = language::get_supported_languages();
     let (channel, submission_completion_channel) =
-        queue::setup_workers(isolate_executable_path, languages);
+        queue::setup_workers(isolate_executable_path, languages.clone());
 
     let broadcaster = Broadcaster::create();
 
@@ -85,18 +86,21 @@ async fn main() -> io::Result<()> {
         let uuid = String::from(&submission_completion.uuid);
         submission::complete_submission(&connection, submission_completion)
             .expect("Couldn't complete submission");
-        submission_broadcaster.lock().unwrap().send("update_submission", &uuid);
+        submission_broadcaster
+            .lock()
+            .unwrap()
+            .send("update_submission", &uuid);
     });
 
     let mut listenfd = ListenFd::from_env();
     let mut server = HttpServer::new(move || {
-        let languages = language::get_supported_languages();
         App::new()
             .data(pool.clone())
             .data(SubmissionState {
                 channel: channel.clone(),
-                languages,
+                languages: languages.clone(),
             })
+            .data(languages.clone())
             .wrap(ErrorHandlers::new().handler(http::StatusCode::UNAUTHORIZED, render_401))
             .wrap(actix_flash::Flash::default())
             .wrap(IdentityService::new(
@@ -178,24 +182,41 @@ async fn index(
     id: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
+    languages: web::Data<Arc<HashMap<String, LanguageParams>>>,
     session: Session,
 ) -> actix_web::Result<HttpResponse> {
     if let None = id.identity() {
         return Ok(HttpResponse::Unauthorized().finish());
     }
-    let languages = language::get_supported_languages();
-    let mut languages = languages.keys().cloned().collect::<Vec<String>>();
-    languages.sort();
 
-    let connection = pool.get().expect("Couldn't get connection from the pool");
-    let problems = problem::get_problems(&connection).expect("Couldn't get problems");
+    #[derive(Serialize)]
+    struct Language {
+        order: i32,
+        name: String,
+        value: String,
+    }
 
     #[derive(Serialize)]
     struct IndexContext {
-        languages: Vec<String>,
+        languages: Vec<Language>,
         language: Option<String>,
         problems: Vec<Problem>,
+        submissions: Vec<SubmissionResult>,
     };
+
+    let mut languages = languages
+        .iter()
+        .map(|(value, language_params)| Language {
+            order: language_params.order,
+            value: value.into(),
+            name: language_params.name.clone(),
+        })
+        .collect::<Vec<_>>();
+    languages.sort_by(|a, b| a.order.cmp(&b.order));
+
+    let connection = pool.get().expect("Couldn't get connection from the pool");
+    let problems = problem::get_problems(&connection).expect("Couldn't get problems");
+    let submissions = submission::get_submissions(&connection).unwrap();
 
     Ok(HttpResponse::Ok().body(
         hb.render(
@@ -203,7 +224,11 @@ async fn index(
             &IndexContext {
                 languages,
                 problems,
-                language: session.get("language")?
+                language: session.get("language")?,
+                submissions: submissions
+                    .iter()
+                    .map(submission_to_submission_result)
+                    .collect(),
             },
         )
         .unwrap(),
@@ -263,6 +288,35 @@ async fn submission_updates(broadcaster: web::Data<Mutex<Broadcaster>>) -> HttpR
         .streaming(rx)
 }
 
+#[derive(Serialize)]
+struct SubmissionResult {
+    uuid: String,
+    verdict: String,
+    problem: String,
+    formatted_date_time: String,
+    compilation_stderr: Option<String>,
+}
+
+fn submission_to_submission_result(
+    submission: &models::submission::Submission,
+) -> SubmissionResult {
+    SubmissionResult {
+        uuid: (&submission.uuid).into(),
+        verdict: submission
+            .verdict
+            .as_ref()
+            .map(|s| String::from(s))
+            .unwrap_or("WJ".into())
+            .to_string(),
+        problem: "A".into(),
+        formatted_date_time: submission
+            .submission_instant
+            .format("%d/%m/%Y %H:%M:%S")
+            .to_string(),
+        compilation_stderr: submission.compilation_stderr.as_ref().map(|s| s.into()),
+    }
+}
+
 #[get("/submissions")]
 async fn get_submissions(
     id: Identity,
@@ -274,15 +328,6 @@ async fn get_submissions(
     }
 
     let connection = pool.get().expect("couldn't get db connection from pool");
-
-    #[derive(Serialize)]
-    struct SubmissionResult {
-        uuid: String,
-        verdict: String,
-        problem: String,
-        formatted_date_time: String,
-        compilation_stderr: Option<String>,
-    }
 
     #[derive(Serialize)]
     struct SubmissionsContext {
@@ -297,24 +342,7 @@ async fn get_submissions(
             &SubmissionsContext {
                 submissions: submissions
                     .iter()
-                    .map(|submission| SubmissionResult {
-                        uuid: (&submission.uuid).into(),
-                        verdict: submission
-                            .verdict
-                            .as_ref()
-                            .map(|s| String::from(s))
-                            .unwrap_or("WJ".into())
-                            .to_string(),
-                        problem: "A".into(),
-                        formatted_date_time: submission
-                            .submission_instant
-                            .format("%d/%m/%Y %H:%M:%S")
-                            .to_string(),
-                        compilation_stderr: submission
-                            .compilation_stderr
-                            .as_ref()
-                            .map(|s| s.into()),
-                    })
+                    .map(submission_to_submission_result)
                     .collect(),
             },
         )
@@ -333,10 +361,11 @@ use crossbeam::channel::Sender;
 use language::LanguageParams;
 use queue::Submission;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 struct SubmissionState {
     channel: Sender<Submission>,
-    languages: HashMap<String, LanguageParams>,
+    languages: Arc<HashMap<String, LanguageParams>>,
 }
 
 use actix_web::Either;

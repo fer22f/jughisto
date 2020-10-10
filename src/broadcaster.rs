@@ -1,12 +1,12 @@
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use std::time::Duration;
 use actix_web::rt::time::{interval_at, Instant};
-use std::sync::Mutex;
-use std::pin::Pin;
-use actix_web::Error;
-use std::task::{Context, Poll};
-use futures::{Stream, StreamExt};
 use actix_web::web::{Bytes, Data};
+use actix_web::Error;
+use futures::{Stream, StreamExt};
+use std::pin::Pin;
+use std::sync::Mutex;
+use std::task::{Context, Poll};
+use std::time::Duration;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 pub struct Broadcaster {
     clients: Vec<Sender<Bytes>>,
@@ -76,10 +76,7 @@ pub struct Client(Receiver<Bytes>);
 impl Stream for Client {
     type Item = Result<Bytes, Error>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.0).poll_next(cx) {
             Poll::Ready(Some(v)) => Poll::Ready(Some(Ok(v))),
             Poll::Ready(None) => Poll::Ready(None),

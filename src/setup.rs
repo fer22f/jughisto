@@ -1,6 +1,6 @@
 use dotenv::dotenv;
-use which::which;
 use log::info;
+use which::which;
 
 use crate::models::user;
 use crate::models::user::NewUser;

@@ -26,100 +26,120 @@ pub enum Compile {
 
 #[derive(Clone)]
 pub struct LanguageParams {
-    name: String,
+    pub order: i32,
+    pub name: String,
     compile: Compile,
     run: Run,
 }
 
-pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
-    fn build_gcc_args<'a>(x: &'a str, std: &'a str) -> Vec<String> {
-        return vec![
-            // Static linked, the judging process has no access to shared libraries
-            "-static".into(),
-            // ONLINE_JUDGE define as in Codeforces
-            "-DONLINE_JUDGE".into(),
-            // Link to the math library
-            "-lm".into(),
-            // Strip all symbols
-            "-s".into(),
-            // Use std
-            format!("-std={}", std),
-            // Define language used
-            "-x".into(),
-            x.into(),
-            // Level 2 optimization
-            "-O2".into(),
-            // Output to exe
-            "-o".into(),
-            "exe".into(),
-            // Input from source
-            "source".into(),
-        ];
+use lazy_static::lazy_static;
+use regex::Regex;
+use std::process;
+use std::str;
+use std::sync::Arc;
+
+pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
+    fn build_gcc_params<'a>(
+        order: i32,
+        name: &'a str,
+        binary_path: PathBuf,
+        x: &'a str,
+        std: &'a str,
+    ) -> LanguageParams {
+        let output = process::Command::new(&binary_path)
+            .arg("--version")
+            .output()
+            .unwrap();
+        let stdout = str::from_utf8(&output.stdout).unwrap();
+        lazy_static! {
+            static ref VERSION_REGEX: Regex = Regex::new(r"(?m)\d+\.\d+\.\d+$").unwrap();
+        }
+        let version = VERSION_REGEX.find(stdout).unwrap().as_str();
+
+        LanguageParams {
+            order,
+            name: name.replace("{}", version),
+            compile: Compile::Commands(vec![Command {
+                binary_path,
+                args: vec![
+                    // Static linked, the judging process has no access to shared libraries
+                    "-static".into(),
+                    // ONLINE_JUDGE define as in Codeforces
+                    "-DONLINE_JUDGE".into(),
+                    // Link to the math library
+                    "-lm".into(),
+                    // Strip all symbols
+                    "-s".into(),
+                    // Use std
+                    format!("-std={}", std),
+                    // Define language used
+                    "-x".into(),
+                    x.into(),
+                    // Level 2 optimization
+                    "-O2".into(),
+                    // Output to exe
+                    "-o".into(),
+                    "exe".into(),
+                    // Input from source
+                    "source".into(),
+                ],
+            }]),
+            run: Run::RunExe,
+        }
     }
 
     let mut languages = HashMap::new();
     languages.insert(
-        "c99.gcc".into(),
-        LanguageParams {
-            name: "GCC C99".into(),
-            compile: Compile::Commands(vec![Command {
-                binary_path: "/usr/bin/gcc".into(),
-                args: build_gcc_args("c", "c99"),
-            }]),
-            run: Run::RunExe,
-        },
-    );
-    languages.insert(
-        "c11.gcc".into(),
-        LanguageParams {
-            name: "GCC C11".into(),
-            compile: Compile::Commands(vec![Command {
-                binary_path: "/usr/bin/gcc".into(),
-                args: build_gcc_args("c", "c11"),
-            }]),
-            run: Run::RunExe,
-        },
-    );
-    languages.insert(
-        "c.gcc".into(),
-        LanguageParams {
-            name: "GCC C18".into(),
-            compile: Compile::Commands(vec![Command {
-                binary_path: "/usr/bin/gcc".into(),
-                args: build_gcc_args("c", "c14"),
-            }]),
-            run: Run::RunExe,
-        },
-    );
-    languages.insert(
         "cpp.g++11".into(),
-        LanguageParams {
-            name: "GCC C++11".into(),
-            compile: Compile::Commands(vec![Command {
-                binary_path: "/usr/bin/g++".into(),
-                args: build_gcc_args("c++", "c++11"),
-            }]),
-            run: Run::RunExe,
-        },
+        build_gcc_params(0, "GNU G++11 {}", "/usr/bin/g++".into(), "c++", "c++11"),
     );
     languages.insert(
         "cpp.g++14".into(),
-        LanguageParams {
-            name: "GCC C++14".into(),
-            compile: Compile::Commands(vec![Command {
-                binary_path: "/usr/bin/g++".into(),
-                args: build_gcc_args("c++", "c++14"),
-            }]),
-            run: Run::RunExe,
-        },
+        build_gcc_params(1, "GNU G++14 {}", "/usr/bin/g++".into(), "c++", "c++14"),
     );
     languages.insert(
         "cpp.g++17".into(),
+        build_gcc_params(2, "GNU G++17 {}", "/usr/bin/g++".into(), "c++", "c++17"),
+    );
+    languages.insert(
+        "c99.gcc".into(),
+        build_gcc_params(3, "GNU GCC C99 {}", "/usr/bin/gcc".into(), "c", "c99"),
+    );
+    languages.insert(
+        "c11.gcc".into(),
+        build_gcc_params(4, "GNU GCC C11 {}", "/usr/bin/gcc".into(), "c", "c11"),
+    );
+    languages.insert(
+        "c.gcc".into(),
+        build_gcc_params(5, "GNU GCC C18 {}", "/usr/bin/gcc".into(), "c", "c18"),
+    );
+    languages.insert(
+        "pas.fpc".into(),
         LanguageParams {
-            name: "GCC C++17".into(),
+            order: 6,
+            name: "Free Pascal".into(),
             compile: Compile::Commands(vec![Command {
-                binary_path: "/usr/bin/g++".into(),
-                args: build_gcc_args("c++", "c++17"),
+                binary_path: "/usr/bin/fpc".into(),
+                args: vec![
+                    // Level 2 optimizations
+                    "-O2".into(),
+                    // Strip the symbols from the executable
+                    "-Xs".into(),
+                    // Link statically
+                    "-XS".into(),
+                    // Allow label and goto, support C++ style inline and C-style operators
+                    "-Sgic".into(),
+                    // Show warnings and notes
+                    "-vwn".into(),
+                    // Define the symbol
+                    "-dONLINE_JUDGE".into(),
+                    // Set stack size
+                    "-Cs67107839".into(),
+                    // Language mode: Delphi compatibility
+                    "-Mdelphi".into(),
+                    "source".into(),
+                    "-oexe".into(),
+                ],
             }]),
             run: Run::RunExe,
         },
@@ -127,6 +147,7 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
     languages.insert(
         "java8".into(),
         LanguageParams {
+            order: 7,
             name: "Java 8".into(),
             compile: Compile::Commands(vec![Command {
                 binary_path: "/usr/bin/javac".into(),
@@ -150,6 +171,7 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
     languages.insert(
         "python.3".into(),
         LanguageParams {
+            order: 8,
             name: "Python 3".into(),
             compile: Compile::NoCompile,
             run: Run::Commands(vec![Command {
@@ -158,7 +180,7 @@ pub fn get_supported_languages() -> HashMap<String, LanguageParams> {
             }]),
         },
     );
-    return languages;
+    Arc::new(languages)
 }
 
 pub fn compile_source<R>(
