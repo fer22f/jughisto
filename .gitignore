@@ -1,3 +1,4 @@
-/target
+target/
+data/
 db.sqlite
-/data
+db.sqlite-journal

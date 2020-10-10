@@ -28,6 +28,8 @@ pub struct NewSubmission {
     pub source_text: String,
     pub language: String,
     pub submission_instant: NaiveDateTime,
+    pub problem_id: i32,
+    pub user_id: i32,
 }
 
 pub fn insert_submission(

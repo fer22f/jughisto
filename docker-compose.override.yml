@@ -1,0 +1,19 @@
+version: "3.1"
+
+services:
+  app:
+    ports:
+      - "8000:8000"
+    build:
+      context: .
+      dockerfile: dev.Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ".:/usr/src/jughisto"
+      - "cargo_registry:/usr/local/cargo/registry"
+      - "cargo_git:/usr/local/cargo/git"
+
+volumes:
+  cargo_registry:
+  cargo_git:

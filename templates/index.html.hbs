@@ -3,6 +3,8 @@
   <title>Juĝisto</title>
   <meta charset="utf-8"/>
   <link rel="stylesheet" href="/static/styles.css"/>
+  <script src="https://unpkg.com/htmx.org@0.2.0"></script>
+  <script src="https://unpkg.com/morphdom@2.6.1"></script>
 <style>
 html, body {
   flex-flow: row;
@@ -127,14 +129,30 @@ html, body {
 }
 </style>
 </head>
-<body>
+<body hx-ext="morphdom-swap" hx-sse="connect:/submission_updates">
   <form method="post" action="/submissions">
+    <label for="problem_id">
+      Problema:
+    </label>
+    <select id="problem_id" name="problem_id">
+      {{ #each problems }}
+      <option value="{{ this.id }}">{{ this.label }} · {{ this.name }}</option>
+      {{ /each }}
+    </select>
+
     <label for="language">
       Linguagem:
     </label>
     <select id="language" name="language">
       {{ #each languages }}
-      <option value="{{ this }}">{{ this }}</option>
+      <option
+        {{ #if (eq ../language this) }}
+        selected
+        {{ /if }}
+        value="{{ this }}"
+      >
+        {{ this }}
+      </option>
       {{ /each }}
     </select>
     <label for="code">Código-fonte</label>
@@ -153,7 +171,7 @@ int main() {
 
   <div id="submissions">
     Submissões
-    <div id="submissions-list">
+    <div id="submissions-list" hx-swap="morphdom" hx-get="/submissions" hx-trigger="load, sse:update_submission">
     </div>
   </div>
 
@@ -164,13 +182,5 @@ int main() {
       source_text.value = await source_file.files[0].text();
       source_file.value = "";
     });
-
-    const submissions = document.body.querySelector("#submissions-list");
-    async function fetchSubmissions() {
-      const response = await fetch("/submissions");
-      submissions.innerHTML = await response.text();
-    }
-    setInterval(fetchSubmissions, 1000);
-    fetchSubmissions();
   </script>
 </body>

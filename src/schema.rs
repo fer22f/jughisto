@@ -47,9 +47,4 @@ joinable!(problem -> contest (contest_id));
 joinable!(submission -> problem (problem_id));
 joinable!(submission -> user (user_id));
 
-allow_tables_to_appear_in_same_query!(
-    contest,
-    problem,
-    submission,
-    user,
-);
+allow_tables_to_appear_in_same_query!(contest, problem, submission, user,);

@@ -14,12 +14,12 @@ Work in progress competitive programming judge that is compatible with Polygon p
 * Polygon contest package support
 * Web backend made in Rust with Rocket+Diesel
 * Isolation made using [isolate](https://github.com/ioi/isolate)
+* Lightweight server-side rendered frontend with SSE updates
+* Docker support
 
 ## TODO
 
-* Docker support
 * Internationalization
-* Lightweight server-side rendered frontend with WebSocket updates + Turbolinks
 * Parallelize judging process
 
 ## Not Planned

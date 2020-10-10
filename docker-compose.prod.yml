@@ -1,0 +1,10 @@
+version: "3.1"
+
+services:
+  app:
+    ports:
+      - "80:8000"
+    build: .
+    environment:
+      - "SECRET_HASH_KEY=rhdFVrOAq/wEyVw9MsmV8MSvGBj0AotAUTHs2yEs+zBlvcMRsfflUc73WgY30SRpH4Djvr60IXhM71MRiLUu9g=="
+      - "IDENTITY_SECRET_KEY=6ZSQTn50oVK/w3blL3eF0tG7q00JxBsMseXhOMOfenM="

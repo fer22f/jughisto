@@ -30,16 +30,22 @@ pub struct IsolateBox {
 pub fn create_box(isolate_executable_path: &PathBuf, id: i32) -> Result<IsolateBox, CommandError> {
     cleanup_box(isolate_executable_path, id)?;
 
-    let process = Command::new(isolate_executable_path)
+    let output = Command::new(isolate_executable_path)
         .arg("--init")
         .arg("--cg")
         .arg(format!("--box-id={}", id))
         .output()
         .map_err(CommandError::CommandIo)?;
 
+    if !output.status.success() {
+        return Err(CommandError::IsolateCommandFailed(
+            str::from_utf8(&output.stderr)?.into(),
+        ));
+    }
+
     Ok(IsolateBox {
         id,
-        path: PathBuf::from(str::from_utf8(&process.stdout)?.trim_end()).join("box"),
+        path: PathBuf::from(str::from_utf8(&output.stdout)?.trim_end()).join("box"),
     })
 }
 

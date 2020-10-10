@@ -2,6 +2,7 @@ use crate::language;
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use std::thread;
 use uuid::Uuid;
+use log::{info};
 
 pub struct Submission {
     pub uuid: Uuid,
@@ -37,6 +38,7 @@ pub fn setup_workers(
 
                 let judge_start_instant = Local::now().naive_local();
 
+                info!("Starting to compile");
                 let language = languages.get(&submission.language).unwrap();
                 let compile_stats = language::compile_source(
                     &isolate_executable_path,
@@ -45,6 +47,7 @@ pub fn setup_workers(
                     &mut Cursor::new(submission.source_text),
                 )
                 .expect("Crashed while compiling");
+                info!("Compile finished");
 
                 if match compile_stats.last().unwrap().exit_code {
                     Some(c) => c != 0,
@@ -77,6 +80,7 @@ pub fn setup_workers(
                     continue;
                 }
 
+                info!("Starting to run");
                 let execute_stats = language::run(
                     &isolate_executable_path,
                     &isolate_box,
@@ -87,6 +91,7 @@ pub fn setup_workers(
                     },
                 )
                 .expect("Crashed while running");
+                info!("Run finished");
 
                 let judge_end_instant = Local::now().naive_local();
 

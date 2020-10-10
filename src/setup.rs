@@ -1,12 +1,13 @@
 use dotenv::dotenv;
 use which::which;
+use log::info;
 
 use crate::models::user;
 use crate::models::user::NewUser;
 use diesel::SqliteConnection;
 
 pub fn setup_dotenv() {
-    dotenv().expect(".env should work");
+    dotenv().ok();
 }
 
 pub fn setup_admin(connection: &SqliteConnection) {
@@ -19,7 +20,7 @@ pub fn setup_admin(connection: &SqliteConnection) {
         .expect("Couldn't check admin user")
     {
         PasswordMatched::UserDoesntExist => {
-            println!("Inserting admin...");
+            info!("Inserting admin...");
             user::insert_new_user(
                 connection,
                 NewUser {
@@ -31,10 +32,10 @@ pub fn setup_admin(connection: &SqliteConnection) {
             .expect("Error saving new user");
         }
         PasswordMatched::PasswordMatches(_) => {
-            println!("Admin already created and is using default password.",)
+            info!("Admin already created and is using default password.",)
         }
         PasswordMatched::PasswordDoesntMatch => {
-            println!("Admin already created and is not using the default password.",)
+            info!("Admin already created and is not using the default password.",)
         }
     }
 }

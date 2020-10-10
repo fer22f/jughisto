@@ -40,10 +40,10 @@ pub struct NewUser<'a> {
 }
 
 pub fn get_user_by_name(connection: &SqliteConnection, name: &str) -> QueryResult<User> {
-    Ok(user_table
+    user_table
         .select(USER_COLUMNS)
         .filter(user_column::name.eq(name))
-        .first::<User>(connection)?)
+        .first::<User>(connection)
 }
 
 #[derive(Error, Debug)]
