@@ -11,7 +11,6 @@ form.main {
   border: 1px solid #ddd;
   display: flex;
   flex-flow: column;
-  flex: 1;
 }
 
 .main > label {
@@ -42,4 +41,125 @@ form.main {
   font-size: 20px;
   padding: 16px;
   box-sizing: border-box;
+}
+
+#submissions {
+  border: 1px solid #ddd;
+  padding: 8px;
+  font-size: 16px;
+  overflow: auto;
+}
+
+#submissions-list {
+  padding: 8px 0;
+}
+
+.submission {
+  padding: 8px;
+  border: 1px solid #ddd;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  flex-flow: column;
+  cursor: pointer;
+  transition: 0.5s all;
+}
+
+.submission .uuid {
+  font-size: 10px;
+  font-family: monospace;
+  padding-bottom: 8px;
+}
+
+.submission .description {
+  display: flex;
+  height: 18px;
+}
+
+.compilation-result {
+  white-space: pre;
+  font-family: monospace;
+}
+
+.lds-hourglass {
+  display: inline-flex;
+  position: relative;
+  width: 0;
+  height: 0;
+  transform: translate(1px, -3px);
+}
+
+.verdict {
+  margin-right: 4px;
+  width: 24px;
+  display: flex;
+  justify-content: center;
+  z-index: 1;
+}
+
+.accepted {
+  background: #291;
+  color: white;
+}
+
+.wrong-answer {
+  background: #b21;
+  color: white;
+}
+
+.runtime-error {
+  background: #80c;
+  color: white;
+}
+
+.memory-limit {
+  background: #cc6600;
+  color: white;
+}
+
+.time-limit {
+  background: #03c;
+  color: white;
+}
+
+.presentation-error {
+  background: #2aa;
+  color: white;
+}
+
+.compilation-error {
+  background: #dda218;
+  color: white;
+}
+
+.lds-hourglass:before {
+  content: " ";
+  display: block;
+  border-radius: 50%;
+  width: 0;
+  height: 0;
+  margin: 0;
+  box-sizing: border-box;
+  border: 11px solid #aaa;
+  border-color: #aaa transparent #aaa transparent;
+  animation: lds-hourglass 1.2s infinite;
+}
+
+@keyframes lds-hourglass {
+  0% {
+    transform: rotate(0);
+    animation-timing-function: cubic-bezier(0.55, 0.055, 0.675, 0.19);
+  }
+  50% {
+    transform: rotate(270deg);
+    animation-timing-function: cubic-bezier(0.215, 0.61, 0.355, 1);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.waiting-judge {
+  background: #777;
+  color: white;
 }

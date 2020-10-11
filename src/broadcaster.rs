@@ -31,7 +31,7 @@ impl Broadcaster {
 
     fn spawn_ping(me: Data<Mutex<Self>>) {
         actix_web::rt::spawn(async move {
-            let mut task = interval_at(Instant::now(), Duration::from_secs(10));
+            let mut task = interval_at(Instant::now(), Duration::from_secs(3));
             while task.next().await.is_some() {
                 me.lock().unwrap().remove_stale_clients();
             }

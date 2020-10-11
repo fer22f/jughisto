@@ -34,16 +34,17 @@ mod setup;
 
 use broadcaster::Broadcaster;
 use listenfd::ListenFd;
+use log::{error, info};
 use std::sync::Mutex;
 use std::thread;
 type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 use std::time::Duration;
+use chrono_tz::Tz;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     setup::setup_dotenv();
 
-    // std::env::set_var("RUST_LOG", "actix_web=info,*=info");
     std::env::set_var("RUST_LOG", "info");
     env_logger::init();
 
@@ -59,12 +60,12 @@ async fn main() -> io::Result<()> {
         .build(manager)
         .expect("Failed to create pool.");
 
-    setup::setup_admin(&pool.get().expect("Coudln't get connection from the pool"));
+    setup::setup_admin(&pool.get().expect("Couldn't get connection from the pool"));
 
     let mut handlebars = Handlebars::new();
     handlebars
         .register_templates_directory(".html.hbs", "./templates")
-        .unwrap();
+        .expect("Couldn't find templates directory");
     let handlebars_ref = web::Data::new(handlebars);
 
     let isolate_executable_path = setup::get_isolate_executable_path();
@@ -88,9 +89,12 @@ async fn main() -> io::Result<()> {
             .expect("Couldn't complete submission");
         submission_broadcaster
             .lock()
-            .unwrap()
+            .expect("Submission broadcaster is not active")
             .send("update_submission", &uuid);
     });
+
+    let tz: Tz = env::var("TZ").expect("TZ environment variable is not set")
+        .parse().expect("Invalid timezone in environment variable TZ");
 
     let mut listenfd = ListenFd::from_env();
     let mut server = HttpServer::new(move || {
@@ -101,7 +105,9 @@ async fn main() -> io::Result<()> {
                 languages: languages.clone(),
             })
             .data(languages.clone())
+            .data(tz.clone())
             .wrap(ErrorHandlers::new().handler(http::StatusCode::UNAUTHORIZED, render_401))
+            .wrap(ErrorHandlers::new().handler(http::StatusCode::BAD_REQUEST, render_400))
             .wrap(actix_flash::Flash::default())
             .wrap(IdentityService::new(
                 CookieIdentityPolicy::new(&private_key.as_bytes())
@@ -114,16 +120,19 @@ async fn main() -> io::Result<()> {
             .app_data(handlebars_ref.clone())
             .service(get_login)
             .service(post_login)
-            .service(index)
+            .service(manage_contests)
+            .service(get_contest_by_id)
             .service(get_submissions)
             .service(create_submission)
-            .service(manage_contests)
             .service(create_contest)
             .service(submission_updates)
             .service(Files::new("/static/", "./static/"))
     });
 
-    server = if let Some(l) = listenfd.take_tcp_listener(0).unwrap() {
+    server = if let Some(l) = listenfd
+        .take_tcp_listener(0)
+        .expect("Can't take TCP listener from listenfd")
+    {
         server.listen(l)?
     } else {
         server.bind("0.0.0.0:8000")?
@@ -132,20 +141,108 @@ async fn main() -> io::Result<()> {
     server.run().await
 }
 
+use actix_web::http::StatusCode;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+#[error("unauthorized")]
+struct UnauthorizedError {}
+
+#[derive(Error, Debug)]
+enum PostError {
+    #[error(transparent)]
+    Unauthorized(#[from] UnauthorizedError),
+    #[error("{0}")]
+    Custom(String),
+    #[error("{0}")]
+    Validation(String),
+    #[error("couldn't get connection from pool")]
+    ConnectionPool(#[from] r2d2::Error),
+    #[error(transparent)]
+    Web(#[from] actix_web::Error),
+    #[error(transparent)]
+    Queue(#[from] crossbeam::SendError<queue::Submission>),
+    #[error("couldn't fetch result from database")]
+    Database(#[from] diesel::result::Error),
+}
+
+
+fn error_response_and_log(me: &impl actix_web::error::ResponseError) -> HttpResponse {
+    use std::fmt::Write;
+    error!("{}", me);
+    let mut resp = HttpResponse::new(me.status_code());
+    let mut buf = actix_web::web::BytesMut::new();
+    let _ = write!(&mut buf, "{}", me);
+    resp.headers_mut().insert(
+        actix_web::http::header::CONTENT_TYPE,
+        actix_web::http::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    resp.set_body(actix_web::body::Body::from(buf))
+}
+
+impl actix_web::error::ResponseError for PostError {
+    fn error_response(&self) -> HttpResponse {
+        error_response_and_log(self)
+    }
+
+    fn status_code(&self) -> StatusCode {
+        match *self {
+            PostError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            PostError::Validation(_) => StatusCode::BAD_REQUEST,
+            PostError::Custom(_)
+            | PostError::ConnectionPool(_)
+            | PostError::Web(_)
+            | PostError::Queue(_)
+            | PostError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+type PostResult = Result<actix_flash::Response<HttpResponse, String>, PostError>;
+
+#[derive(Error, Debug)]
+enum GetError {
+    #[error("unauthorized")]
+    Unauthorized(#[from] UnauthorizedError),
+    #[error("couldn't render")]
+    Render(#[from] handlebars::RenderError),
+    #[error(transparent)]
+    Actix(#[from] actix_web::Error),
+    #[error("couldn't fetch result from database")]
+    Diesel(#[from] diesel::result::Error),
+    #[error("couldn't get connection from pool")]
+    R2d2Pool(#[from] r2d2::Error),
+}
+
+impl actix_web::error::ResponseError for GetError {
+    fn error_response(&self) -> HttpResponse {
+        error_response_and_log(self)
+    }
+
+    fn status_code(&self) -> StatusCode {
+        match *self {
+            GetError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            GetError::Render(_)
+            | GetError::Actix(_)
+            | GetError::Diesel(_)
+            | GetError::R2d2Pool(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+type GetResult = Result<HttpResponse, GetError>;
+
 #[get("/login")]
 async fn get_login(
     flash: Option<actix_flash::Message<String>>,
     hb: web::Data<Handlebars<'_>>,
-) -> HttpResponse {
-    HttpResponse::Ok().body(
-        hb.render(
-            "login",
-            &json!({
-                "flash_message": flash.map_or("".into(), |f| f.into_inner())
-            }),
-        )
-        .unwrap(),
-    )
+) -> GetResult {
+    Ok(HttpResponse::Ok().body(hb.render(
+        "login",
+        &json!({
+            "flash_message": flash.map_or("".into(), |f| f.into_inner())
+        }),
+    )?))
 }
 
 use actix_web::Responder;
@@ -168,6 +265,27 @@ fn render_401(
     ))
 }
 
+fn render_400(
+    mut res: dev::ServiceResponse<dev::Body>,
+) -> actix_web::Result<ErrorHandlerResponse<dev::Body>> {
+    Ok(ErrorHandlerResponse::Future(
+        async move {
+            let response = redirect_to_referer(
+                match res.take_body() {
+                    actix_web::dev::ResponseBody::Body(actix_web::dev::Body::Bytes(bytes)) =>
+                        String::from_utf8((&bytes).to_vec()).unwrap(),
+                    _ => "Entrada inválida".into()
+                },
+                res.request()
+            )
+            .respond_to(res.request())
+            .await?;
+            Ok(res.into_response(response))
+        }
+        .boxed_local(),
+    ))
+}
+
 #[derive(Serialize, Deserialize)]
 struct LoginForm {
     name: String,
@@ -175,19 +293,24 @@ struct LoginForm {
 }
 
 use models::problem;
-use models::problem::Problem;
+use models::problem::ProblemByContest;
 
-#[get("/")]
-async fn index(
-    id: Identity,
+fn get_identity(identity: Identity) -> Result<LoggedUser, UnauthorizedError> {
+    let identity = identity.identity().ok_or(UnauthorizedError {})?;
+    serde_json::from_str(&identity).map_err(|_| UnauthorizedError {})
+}
+
+#[get("/contests/{id}")]
+async fn get_contest_by_id(
+    identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
     languages: web::Data<Arc<HashMap<String, LanguageParams>>>,
     session: Session,
-) -> actix_web::Result<HttpResponse> {
-    if let None = id.identity() {
-        return Ok(HttpResponse::Unauthorized().finish());
-    }
+    path: web::Path<(i32, )>,
+    tz: web::Data<Tz>,
+) -> GetResult {
+    get_identity(identity)?;
 
     #[derive(Serialize)]
     struct Language {
@@ -200,8 +323,8 @@ async fn index(
     struct IndexContext {
         languages: Vec<Language>,
         language: Option<String>,
-        problems: Vec<Problem>,
-        submissions: Vec<SubmissionResult>,
+        problems: Vec<ProblemByContest>,
+        submissions: Vec<FormattedSubmission>,
     };
 
     let mut languages = languages
@@ -214,9 +337,9 @@ async fn index(
         .collect::<Vec<_>>();
     languages.sort_by(|a, b| a.order.cmp(&b.order));
 
-    let connection = pool.get().expect("Couldn't get connection from the pool");
-    let problems = problem::get_problems(&connection).expect("Couldn't get problems");
-    let submissions = submission::get_submissions(&connection).unwrap();
+    let connection = pool.get()?;
+    let problems = problem::get_problems_by_contest_id(&connection, path.into_inner().0)?;
+    let submissions = submission::get_submissions(&connection)?;
 
     Ok(HttpResponse::Ok().body(
         hb.render(
@@ -227,11 +350,10 @@ async fn index(
                 language: session.get("language")?,
                 submissions: submissions
                     .iter()
-                    .map(submission_to_submission_result)
+                    .map(|s| format_submission(&tz, s))
                     .collect(),
             },
-        )
-        .unwrap(),
+        )?,
     ))
 }
 
@@ -244,44 +366,50 @@ struct LoggedUser {
 
 #[post("/login")]
 async fn post_login(
-    id: Identity,
+    identity: Identity,
     pool: web::Data<DbPool>,
     form: web::Form<LoginForm>,
-) -> actix_flash::Response<HttpResponse, String> {
-    let connection = pool.get().expect("couldn't get db connection from pool");
+) -> PostResult {
+    let connection = pool.get()?;
 
+    use actix_web::error::BlockingError;
     use user::PasswordMatched;
+    use user::UserHashingError;
     match web::block(move || user::check_matching_password(&connection, &form.name, &form.password))
         .await
-    {
-        Ok(PasswordMatched::UserDoesntExist) => {
-            actix_flash::Response::with_redirect("Usuário não existe".into(), "/login")
-        }
-        Ok(PasswordMatched::PasswordDoesntMatch) => {
-            actix_flash::Response::with_redirect("Senha incorreta".into(), "/login")
-        }
-        Ok(PasswordMatched::PasswordMatches(user)) => {
-            if let Ok(user) = user {
-                id.remember(
-                    serde_json::to_string(&LoggedUser {
-                        id: user.id,
-                        name: (&user.name).into(),
-                        is_admin: user.is_admin,
-                    })
-                    .expect("Couldn't convert user to JSON"),
-                );
-                actix_flash::Response::with_redirect("".into(), "/")
-            } else {
-                actix_flash::Response::with_redirect("Erro interno do servidor".into(), "/login")
+        .map_err(|e| match e {
+            BlockingError::Error(UserHashingError::Database(e)) => PostError::Database(e),
+            BlockingError::Error(UserHashingError::Hash(_)) => {
+                PostError::Validation("Senha inválida".into())
             }
+            BlockingError::Canceled => PostError::Web(e.into()),
+        })? {
+        PasswordMatched::UserDoesntExist => {
+            Err(PostError::Validation("Usuário inexistente".into()))
         }
-        Err(_) => actix_flash::Response::with_redirect("Erro interno do servidor".into(), "/login"),
+        PasswordMatched::PasswordDoesntMatch => {
+            Err(PostError::Validation("Senha incorreta".into()))
+        }
+        PasswordMatched::PasswordMatches(user) => {
+            identity.remember(
+                serde_json::to_string(&LoggedUser {
+                    id: user.id,
+                    name: (&user.name).into(),
+                    is_admin: user.is_admin,
+                })
+                .map_err(|_| PostError::Custom("Usuário no banco de dados inconsistente".into()))?,
+            );
+            Ok(actix_flash::Response::with_redirect("".into(), "/"))
+        }
     }
 }
 
 #[get("/submission_updates")]
 async fn submission_updates(broadcaster: web::Data<Mutex<Broadcaster>>) -> HttpResponse {
-    let rx = broadcaster.lock().unwrap().new_client();
+    let rx = broadcaster
+        .lock()
+        .expect("Submission broadcaster is not active")
+        .new_client();
 
     HttpResponse::Ok()
         .header("content-type", "text/event-stream")
@@ -289,70 +417,71 @@ async fn submission_updates(broadcaster: web::Data<Mutex<Broadcaster>>) -> HttpR
 }
 
 #[derive(Serialize)]
-struct SubmissionResult {
+struct FormattedSubmission {
     uuid: String,
     verdict: String,
-    problem: String,
-    formatted_date_time: String,
-    compilation_stderr: Option<String>,
+    problem_label: String,
+    submission_instant: String,
+    error_output: Option<String>,
 }
 
-fn submission_to_submission_result(
+fn format_utc_date_time(tz: &Tz, input: NaiveDateTime) -> String {
+    tz.from_utc_datetime(&input)
+        .format("%d/%m/%Y %H:%M:%S")
+        .to_string()
+}
+
+fn format_submission(
+    tz: &Tz,
     submission: &models::submission::Submission,
-) -> SubmissionResult {
-    SubmissionResult {
+) -> FormattedSubmission {
+    FormattedSubmission {
         uuid: (&submission.uuid).into(),
         verdict: submission
             .verdict
             .as_ref()
             .map(|s| String::from(s))
             .unwrap_or("WJ".into())
-            .to_string(),
-        problem: "A".into(),
-        formatted_date_time: submission
-            .submission_instant
-            .format("%d/%m/%Y %H:%M:%S")
-            .to_string(),
-        compilation_stderr: submission.compilation_stderr.as_ref().map(|s| s.into()),
+            .into(),
+        problem_label: "A".into(),
+        submission_instant: format_utc_date_time(tz, submission.submission_instant),
+        error_output: submission.error_output.as_ref().map(|s| s.into()),
     }
 }
 
 #[get("/submissions")]
 async fn get_submissions(
-    id: Identity,
+    identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
-) -> HttpResponse {
-    if let None = id.identity() {
-        return HttpResponse::Unauthorized().finish();
-    }
-
-    let connection = pool.get().expect("couldn't get db connection from pool");
+    tz: web::Data<Tz>,
+) -> GetResult {
+    get_identity(identity)?;
+    let connection = pool.get()?;
 
     #[derive(Serialize)]
     struct SubmissionsContext {
-        submissions: Vec<SubmissionResult>,
+        submissions: Vec<FormattedSubmission>,
     }
 
-    let submissions = submission::get_submissions(&connection).unwrap();
+    let submissions = submission::get_submissions(&connection)?;
 
-    HttpResponse::Ok().body(
+    Ok(HttpResponse::Ok().body(
         hb.render(
             "submissions",
             &SubmissionsContext {
                 submissions: submissions
                     .iter()
-                    .map(submission_to_submission_result)
+                    .map(|s| format_submission(&tz, s))
                     .collect(),
             },
-        )
-        .unwrap(),
-    )
+        )?,
+    ))
 }
 
 #[derive(Serialize, Deserialize)]
 struct SubmissionForm {
-    problem_id: i32,
+    contest_problem_id: i32,
     language: String,
     source_text: String,
 }
@@ -368,172 +497,235 @@ struct SubmissionState {
     languages: Arc<HashMap<String, LanguageParams>>,
 }
 
-use actix_web::Either;
+use actix_web::HttpRequest;
+
+fn redirect_to_referer(message: String, request: &HttpRequest) -> PostResult {
+    let referer = request.headers().get("Referer").ok_or(PostError::Validation("Cabeçalho Referer inexistente".into()))?;
+    let referer_str = referer.to_str().map_err(|_| PostError::Validation("Cabeçalho Referer inválido".into()))?;
+    Ok(actix_flash::Response::with_redirect(message, referer_str))
+}
 
 #[post("/submissions")]
 async fn create_submission(
-    id: Identity,
+    identity: Identity,
     form: web::Form<SubmissionForm>,
     submission_state: web::Data<SubmissionState>,
     pool: web::Data<DbPool>,
     session: Session,
-) -> actix_web::Result<Either<actix_flash::Response<HttpResponse, String>, HttpResponse>> {
-    let logged_user: LoggedUser;
-    match id.identity() {
-        None => return Ok(Either::B(HttpResponse::Unauthorized().finish())),
-        Some(user) => {
-            logged_user = serde_json::from_str(&user).expect("couldn't deserialize user");
-        }
-    }
+    request: HttpRequest,
+) -> PostResult {
+    let identity = get_identity(identity)?;
+    let connection = pool.get()?;
 
-    let connection = pool.get().expect("couldn't get db connection from pool");
+    submission_state
+        .languages
+        .get(&form.language)
+        .ok_or(PostError::Validation("Linguagem inexistente".into()))?;
 
-    match submission_state.languages.get(&form.language) {
-        Some(_) => {
-            let uuid = Uuid::new_v4();
-            if let Err(e) = submission::insert_submission(
-                &connection,
-                submission::NewSubmission {
-                    uuid: uuid.to_string(),
-                    source_text: (&form.source_text).into(),
-                    language: (&form.language).into(),
-                    submission_instant: Local::now().naive_local(),
-                    problem_id: form.problem_id,
-                    user_id: logged_user.id,
-                },
-            ) {
-                println!("Couldn't insert submission: {}", e);
-                return Ok(Either::A(actix_flash::Response::with_redirect(
-                    "Falha ao submeter".into(),
-                    "/",
-                )));
-            }
+    let uuid = Uuid::new_v4();
+    submission::insert_submission(
+        &connection,
+        submission::NewSubmission {
+            uuid: uuid.to_string(),
+            source_text: (&form.source_text).into(),
+            language: (&form.language).into(),
+            submission_instant: Local::now().naive_local(),
+            contest_problem_id: form.contest_problem_id,
+            user_id: identity.id,
+        },
+    )?;
 
-            if let Err(e) = submission_state.channel.send(Submission {
-                uuid,
-                language: (&form.language).into(),
-                source_text: (&form.source_text).into(),
-            }) {
-                println!("Couldn't send submission: {}", e);
-                return Ok(Either::A(actix_flash::Response::with_redirect(
-                    "Falha ao submeter".into(),
-                    "/",
-                )));
-            }
+    submission_state.channel.send(Submission {
+        uuid,
+        language: (&form.language).into(),
+        source_text: (&form.source_text).into(),
+    })?;
 
-            session.set("language", &form.language)?;
-            Ok(Either::A(actix_flash::Response::with_redirect(
-                format!("Submetido {} com sucesso!", uuid),
-                "/",
-            )))
-        }
-        None => Ok(Either::A(actix_flash::Response::with_redirect(
-            "Linguagem inexistente".into(),
-            "/",
-        ))),
-    }
-}
+    session.set("language", &form.language)?;
 
-#[get("/manage/contests")]
-async fn manage_contests(id: Identity, hb: web::Data<Handlebars<'_>>) -> HttpResponse {
-    if let None = id.identity() {
-        return HttpResponse::Unauthorized().finish();
-    }
-
-    HttpResponse::Ok().body(
-        hb.render(
-            "manage_contests",
-            &json!({
-                "contents": [
-                    { "id": 1, "name": "Plano B", "formatted_start_instant": "1", "formatted_end_instant": "2" }
-                ]
-            })
-        ).unwrap()
+    redirect_to_referer(
+        format!("Submetido {} com sucesso!", uuid),
+        &request
     )
 }
 
+#[get("/contests/manage")]
+async fn manage_contests(
+    identity: Identity,
+    pool: web::Data<DbPool>,
+    hb: web::Data<Handlebars<'_>>,
+    tz: web::Data<Tz>,
+) -> GetResult {
+    get_identity(identity)?;
+    let connection = pool.get()?;
+    let contests = contest::get_contests(&connection)?;
+
+    #[derive(Serialize)]
+    struct FormattedContest {
+        pub id: i32,
+        pub name: String,
+        pub start_instant: Option<String>,
+        pub end_instant: Option<String>,
+    }
+
+    #[derive(Serialize)]
+    struct ManageContestsContext {
+        contests: Vec<FormattedContest>
+    }
+
+    Ok(HttpResponse::Ok().body(
+        hb.render(
+            "manage_contests",
+            &ManageContestsContext {
+                contests: contests.iter().map(|c| FormattedContest {
+                    id: c.id,
+                    name: c.name.clone(),
+                    start_instant: c.start_instant.map(|i| format_utc_date_time(&tz, i)),
+                    end_instant: c.end_instant.map(|i| format_utc_date_time(&tz, i)),
+                }).collect()
+            }
+        )?
+    ))
+}
+
+use crate::models::contest;
+use crate::models::contest::Contest;
 use actix_multipart::Multipart;
 use futures::StreamExt;
 use futures::TryStreamExt;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
+use std::iter::FromIterator;
 use std::str;
 
 #[post("/manage/contests")]
 async fn create_contest(
-    id: Identity,
+    identity: Identity,
+    pool: web::Data<DbPool>,
     mut payload: Multipart,
-) -> Result<Either<actix_flash::Response<HttpResponse, String>, HttpResponse>, io::Error> {
-    if let None = id.identity() {
-        return Ok(Either::B(HttpResponse::Unauthorized().finish()));
-    }
+) -> PostResult {
+    get_identity(identity)?;
 
     #[derive(Debug)]
-    struct NewContest {
+    struct Form {
         name: Option<String>,
         start_instant: Option<String>,
         end_instant: Option<String>,
         polygon_zip: Option<Cursor<Vec<u8>>>,
     }
 
-    let mut new_contest = NewContest {
+    let mut form = Form {
         name: None,
         start_instant: None,
         end_instant: None,
         polygon_zip: None,
     };
 
-    let mut result = String::new();
     while let Ok(Some(mut field)) = payload.try_next().await {
         let mut cursor = Cursor::new(vec![]);
         while let Some(chunk) = field.next().await {
             let data = chunk.unwrap();
-            match cursor.write(&data) {
-                Err(_) => {
-                    return Ok(Either::A(actix_flash::Response::with_redirect(
-                        String::from("Ocorreu um erro na importação"),
-                        "/manage/contest",
-                    )))
-                }
-                _ => {}
-            }
+            cursor
+                .write(&data)
+                .map_err(|_| PostError::Validation("Corpo inválido".into()))?;
         }
 
         cursor.set_position(0);
 
+        fn parse_field(field: &str, cursor: &mut Cursor<Vec<u8>>) -> Result<String, PostError> {
+            let mut value = String::new();
+            cursor
+                .read_to_string(&mut value)
+                .map_err(|_| PostError::Validation(format!("Campo {} inválido", field)))?;
+            Ok(value)
+        }
+
         match field.content_disposition().unwrap().get_name() {
-            Some("name") => {
-                let mut name = String::new();
-                cursor.read_to_string(&mut name)?;
-                new_contest.name = Some(name);
-            }
+            Some("name") => form.name = Some(parse_field("name", &mut cursor)?),
             Some("start_instant") => {
-                let mut start_instant = String::new();
-                cursor.read_to_string(&mut start_instant)?;
-                new_contest.start_instant = Some(start_instant);
+                form.start_instant = Some(parse_field("start_instant", &mut cursor)?)
             }
             Some("end_instant") => {
-                let mut end_instant = String::new();
-                cursor.read_to_string(&mut end_instant)?;
-                new_contest.end_instant = Some(end_instant);
+                form.end_instant = Some(parse_field("end_instant", &mut cursor)?)
             }
-            Some("polygon_zip") => new_contest.polygon_zip = Some(cursor),
+            Some("polygon_zip") => form.polygon_zip = Some(cursor),
             _ => {}
         }
     }
 
-    if let Some(polygon_zip) = new_contest.polygon_zip {
-        match import_contest::import_file(polygon_zip) {
-            Ok(s) => result.push_str(&s),
-            _ => {
-                return Ok(Either::A(actix_flash::Response::with_redirect(
-                    String::from("Ocorreu um erro na importação"),
-                    "/manage/contest",
-                )))
-            }
-        }
+    let polygon_zip = form
+        .polygon_zip
+        .ok_or(PostError::Validation("Arquivo não informado".into()))?;
+    let imported = import_contest::import_file(polygon_zip)
+        .map_err(|_| PostError::Validation("Não foi possível importar".into()))?;
+    let connection = pool.get()?;
+
+    let contest = contest::insert_contest(
+        &connection,
+        contest::NewContest {
+            name: form.name.unwrap(),
+            start_instant: form.start_instant.and_then(|s| s.parse().ok()),
+            end_instant: form.end_instant.and_then(|s| s.parse().ok()),
+        },
+    )?;
+
+    fn polygon_url_to_id_without_revision(url: String) -> String {
+        url.replace("https://polygon.codeforces.com/", "polygon:")
+            .replace("/", ".")
     }
 
-    Ok(Either::B(HttpResponse::Ok().body(result)))
+    let problem_label: HashMap<String, String> = HashMap::from_iter(
+        imported
+            .0
+            .problems
+            .problem
+            .iter()
+            .map(|problem| (polygon_url_to_id_without_revision(problem.url.clone()), problem.index.clone())),
+    );
+
+    for problem in imported.1 {
+        let problem_id_without_revision = polygon_url_to_id_without_revision(problem.url);
+        let problem_id = format!("{}.r{}", problem_id_without_revision, &problem.revision);
+        problem::upsert_problem(
+            &connection,
+            problem::NewProblem {
+                id: problem_id.clone(),
+                name: problem.names.name[0].value.clone(),
+                memory_limit_bytes: problem.judging.testset[0]
+                    .memory_limit
+                    .value
+                    .parse()
+                    .unwrap(),
+                time_limit_ms: problem.judging.testset[0].time_limit.value.parse().unwrap(),
+                checker_path: problem.assets.checker.source.path.clone(),
+                checker_language: problem.assets.checker.r#type.clone(),
+                validator_path: problem.assets.validators.validator[0].source.path.clone(),
+                validator_language: problem.assets.validators.validator[0].source.r#type.clone(),
+                main_solution_path: problem.assets.solutions.solution[0].source.path.clone(),
+                main_solution_language: problem.assets.solutions.solution[0].source.r#type.clone(),
+                test_count: problem.judging.testset[0].test_count.value.parse().unwrap(),
+                status: "unpacked".into(),
+            },
+        )?;
+        contest::relate_problem(
+            &connection,
+            contest::NewContestProblems {
+                label: problem_label
+                    .get(&problem_id_without_revision)
+                    .ok_or(PostError::Validation(
+                        "Arquivo não contém problemas listados".into(),
+                    ))?
+                    .to_string()
+                    .to_uppercase(),
+                contest_id: contest.id,
+                problem_id,
+            },
+        )?;
+    }
+
+    Ok(actix_flash::Response::new(
+        None,
+        HttpResponse::Ok().body(imported.2),
+    ))
 }

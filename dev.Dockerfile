@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo install diesel_cli --no-default-features --features sqlite-bundled && \
     cargo install systemfd && \
     cargo install cargo-watch
-RUN apk --no-cache add gcc g++
+RUN apk --no-cache add gcc g++ python3 openjdk8 strace
 COPY --from=cmplopes/alpine-freepascal /usr/bin/fpc /usr/bin/fpc
 COPY --from=cmplopes/alpine-freepascal /usr/lib/fpc /usr/lib/fpc
 COPY --from=cmplopes/alpine-freepascal /usr/bin/ppcx64 /usr/bin/ppcx64

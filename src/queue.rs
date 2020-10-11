@@ -11,6 +11,7 @@ pub struct Submission {
 }
 
 use crate::isolate;
+use crate::isolate::RunStats;
 use crate::isolate::RunStatus;
 use crate::language::LanguageParams;
 use crate::models::submission::SubmissionCompletion;
@@ -50,9 +51,14 @@ pub fn setup_workers(
                 .expect("Crashed while compiling");
                 info!("Compile finished: {:#?}", compile_stats);
 
-                if match compile_stats.last().unwrap().exit_code {
-                    Some(c) => c != 0,
-                    None => true,
+                if match compile_stats {
+                    None => false,
+                    Some(RunStats {
+                        exit_code: Some(c), ..
+                    }) => c != 0,
+                    Some(RunStats {
+                        exit_code: None, ..
+                    }) => true,
                 } {
                     let judge_end_instant = Local::now().naive_local();
 
@@ -76,7 +82,7 @@ pub fn setup_workers(
                             memory_kib: None,
                             time_ms: None,
                             time_wall_ms: None,
-                            compilation_stderr: Some(last_stderr),
+                            error_output: Some(last_stderr),
                         })
                         .expect("Couldn't send back submission completion");
 
@@ -89,14 +95,18 @@ pub fn setup_workers(
                     &isolate_box,
                     &language,
                     &language::ExecuteParams {
-                        memory_limit_mib: 4,
+                        memory_limit_mib: 1_024 * 8,
                         time_limit_ms: 1_000,
                     },
                 )
                 .expect("Crashed while running");
-                info!("Run finished");
+                info!("Run finished: {:#?}", execute_stats);
 
                 let judge_end_instant = Local::now().naive_local();
+
+                let mut stderr_file = &execute_stats.stderr;
+                let mut stderr = String::new();
+                stderr_file.read_to_string(&mut stderr).unwrap_or(0);
 
                 submission_completion_sender
                     .send(SubmissionCompletion {
@@ -115,7 +125,7 @@ pub fn setup_workers(
                         memory_kib: execute_stats.memory_kib,
                         time_ms: execute_stats.time_ms,
                         time_wall_ms: execute_stats.time_wall_ms,
-                        compilation_stderr: None,
+                        error_output: Some(stderr),
                     })
                     .expect("Coudln't send back submission completion");
             }

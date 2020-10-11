@@ -9,7 +9,7 @@ CREATE TABLE submission (
   memory_kib integer null,
   time_ms integer null,
   time_wall_ms integer null,
-  compilation_stderr text null,
-  problem_id integer references problem(id) not null,
+  error_output text null,
+  contest_problem_id integer references contest_problems(id) not null,
   user_id integer references user(id) not null
 )

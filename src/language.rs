@@ -1,40 +1,40 @@
 use crate::isolate;
-use crate::isolate::{CommandError, CompileParams, IsolateBox};
+use crate::isolate::{CommandError, CommandTuple, CompileParams, IsolateBox};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::PathBuf;
-
-#[derive(Clone)]
-pub struct Command {
-    pub binary_path: PathBuf,
-    pub args: Vec<String>,
-}
+use std::process::Command;
 
 #[derive(Clone)]
 pub enum Run {
     RunExe,
-    Commands(Vec<Command>),
+    Command(CommandTuple),
 }
 
 #[derive(Clone)]
 pub enum Compile {
     NoCompile,
-    Commands(Vec<Command>),
+    Command(CommandTuple),
+    TransformAndCommand(
+        &'static (dyn Fn(String, String) -> String + Sync),
+        CommandTuple,
+    ),
 }
 
 #[derive(Clone)]
 pub struct LanguageParams {
     pub order: i32,
     pub name: String,
+    suffix: String,
     compile: Compile,
     run: Run,
 }
 
 use lazy_static::lazy_static;
+use regex::Captures;
 use regex::Regex;
-use std::process;
 use std::str;
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
         x: &'a str,
         std: &'a str,
     ) -> LanguageParams {
-        let output = process::Command::new(&binary_path)
+        let output = Command::new(&binary_path)
             .arg("--version")
             .output()
             .unwrap();
@@ -58,8 +58,9 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
 
         LanguageParams {
             order,
+            suffix: "".into(),
             name: name.replace("{}", version),
-            compile: Compile::Commands(vec![Command {
+            compile: Compile::Command(CommandTuple {
                 binary_path,
                 args: vec![
                     // Static linked, the judging process has no access to shared libraries
@@ -83,42 +84,27 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                     // Input from source
                     "source".into(),
                 ],
-            }]),
+            }),
             run: Run::RunExe,
         }
     }
 
     let mut languages = HashMap::new();
     languages.insert(
-        "cpp.g++11".into(),
-        build_gcc_params(0, "GNU G++11 {}", "/usr/bin/g++".into(), "c++", "c++11"),
-    );
-    languages.insert(
-        "cpp.g++14".into(),
-        build_gcc_params(1, "GNU G++14 {}", "/usr/bin/g++".into(), "c++", "c++14"),
-    );
-    languages.insert(
-        "cpp.g++17".into(),
+        "cpp.17.g++".into(),
         build_gcc_params(2, "GNU G++17 {}", "/usr/bin/g++".into(), "c++", "c++17"),
     );
     languages.insert(
-        "c99.gcc".into(),
-        build_gcc_params(3, "GNU GCC C99 {}", "/usr/bin/gcc".into(), "c", "c99"),
-    );
-    languages.insert(
-        "c11.gcc".into(),
-        build_gcc_params(4, "GNU GCC C11 {}", "/usr/bin/gcc".into(), "c", "c11"),
-    );
-    languages.insert(
-        "c.gcc".into(),
+        "c.18.gcc".into(),
         build_gcc_params(5, "GNU GCC C18 {}", "/usr/bin/gcc".into(), "c", "c18"),
     );
     languages.insert(
-        "pas.fpc".into(),
+        "pascal.fpc".into(),
         LanguageParams {
             order: 6,
             name: "Free Pascal".into(),
-            compile: Compile::Commands(vec![Command {
+            suffix: "".into(),
+            compile: Compile::Command(CommandTuple {
                 binary_path: "/usr/bin/fpc".into(),
                 args: vec![
                     // Level 2 optimizations
@@ -140,32 +126,52 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                     "source".into(),
                     "-oexe".into(),
                 ],
-            }]),
+            }),
             run: Run::RunExe,
         },
     );
     languages.insert(
-        "java8".into(),
+        "java.8".into(),
         LanguageParams {
             order: 7,
             name: "Java 8".into(),
-            compile: Compile::Commands(vec![Command {
-                binary_path: "/usr/bin/javac".into(),
-                args: vec!["-cp".into(), "\".;*\"".into(), "source".into()],
-            }]),
-            run: Run::Commands(vec![Command {
+            suffix: ".java".into(),
+            compile: Compile::TransformAndCommand(
+                &|source_text, source_name| {
+                    lazy_static! {
+                        static ref PUBLIC_CLASS_REGEX: Regex =
+                            Regex::new(r"(?i)([^{}]*public\s+class\s+)(\w+)").unwrap();
+                    }
+                    PUBLIC_CLASS_REGEX
+                        .replacen(&source_text, 1, |caps: &Captures| {
+                            format!("{}{}", &caps[1], source_name)
+                        })
+                        .into()
+                },
+                CommandTuple {
+                    binary_path: "/usr/lib/jvm/java-1.8-openjdk/bin/javac".into(),
+                    args: vec![
+                        "-cp".into(),
+                        "\".;*\"".into(),
+                        "-J-Xmx512m".into(),
+                        "-J-XX:MaxMetaspaceSize=128m".into(),
+                        "-J-XX:CompressedClassSpaceSize=64m".into(),
+                        "source.java".into(),
+                    ],
+                },
+            ),
+            run: Run::Command(CommandTuple {
                 binary_path: "/usr/bin/java".into(),
                 args: vec![
-                    "-Xmx512M".into(),
-                    "-Xss64M".into(),
+                    "-Xmx512m".into(),
+                    "-Xss64m".into(),
                     "-DONLINE_JUDGE=true".into(),
                     "-Duser.language=en".into(),
                     "-Duser.region=US".into(),
                     "-Duser.variant=US".into(),
-                    "-jar".into(),
-                    "exe".into(),
+                    "source".into(),
                 ],
-            }]),
+            }),
         },
     );
     languages.insert(
@@ -173,55 +179,70 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
         LanguageParams {
             order: 8,
             name: "Python 3".into(),
+            suffix: "".into(),
             compile: Compile::NoCompile,
-            run: Run::Commands(vec![Command {
+            run: Run::Command(CommandTuple {
                 binary_path: "/usr/bin/python3".into(),
                 args: vec!["source".into()],
-            }]),
+            }),
         },
     );
     Arc::new(languages)
 }
+
+use std::io::Write;
 
 pub fn compile_source<R>(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     language: &LanguageParams,
     reader: &mut R,
-) -> Result<Vec<isolate::RunStats<File>>, CommandError>
+) -> Result<Option<isolate::RunStats<File>>, CommandError>
 where
     R: Read,
 {
-    let mut source_file =
-        File::create(isolate_box.path.join("source")).map_err(CommandError::CopyIo)?;
-    io::copy(reader, &mut source_file).map_err(CommandError::CopyIo)?;
+    if let Compile::NoCompile = language.compile {
+        return Ok(None);
+    }
+
+    let source_name = "source";
+
+    let mut source_file = File::create(
+        isolate_box
+            .path
+            .join(format!("{}{}", source_name, language.suffix)),
+    )
+    .map_err(CommandError::CopyIo)?;
+
+    if let Compile::TransformAndCommand(transform, _) = language.compile {
+        let mut string = String::new();
+        reader
+            .read_to_string(&mut string)
+            .map_err(CommandError::CopyIo)?;
+        source_file
+            .write(transform(string, source_name.into()).as_bytes())
+            .map_err(CommandError::CopyIo)?;
+    } else {
+        io::copy(reader, &mut source_file).map_err(CommandError::CopyIo)?;
+    }
+
     source_file.sync_data().map_err(CommandError::CopyIo)?;
 
-    if let Compile::Commands(commands) = &language.compile {
-        let mut result = Vec::<isolate::RunStats<File>>::new();
-        for command in commands {
+    match &language.compile {
+        Compile::Command(command) | Compile::TransformAndCommand(_, command) => {
             let stats = isolate::compile(
                 isolate_executable_path,
                 isolate_box,
                 CompileParams {
-                    memory_limit_mib: 1_000,
+                    memory_limit_mib: 1_024,
                     time_limit_ms: 50_000,
-                    command,
+                    command: &command,
                 },
             )?;
-            if match stats.exit_code {
-                Some(c) => c != 0,
-                None => true,
-            } {
-                result.push(stats);
-                return Ok(result);
-            }
-            result.push(stats);
+            Ok(Some(stats))
         }
-        return Ok(result);
+        Compile::NoCompile => Ok(None),
     }
-
-    Ok(vec![])
 }
 
 pub struct ExecuteParams {
@@ -235,16 +256,32 @@ pub fn run(
     language: &LanguageParams,
     execute_params: &ExecuteParams,
 ) -> Result<isolate::RunStats<File>, CommandError> {
-    match language.run {
-        Run::RunExe => isolate::execute(
+    match &language.run {
+        Run::RunExe => Ok(isolate::execute(
             &isolate_executable_path,
             &isolate_box,
+            &CommandTuple {
+                binary_path: "exe".into(),
+                args: vec![],
+            },
             &isolate::ExecuteParams {
                 memory_limit_mib: execute_params.memory_limit_mib,
                 time_limit_ms: execute_params.time_limit_ms,
                 stdin: "./data/stdin".into(),
             },
-        ),
-        Run::Commands(_) => Err(CommandError::IsolateCommandFailed("Not implemented".into())),
+        )?),
+        Run::Command(command) => {
+            let stats = isolate::execute(
+                &isolate_executable_path,
+                &isolate_box,
+                &command,
+                &isolate::ExecuteParams {
+                    memory_limit_mib: execute_params.memory_limit_mib,
+                    time_limit_ms: execute_params.time_limit_ms,
+                    stdin: "./data/stdin".into(),
+                },
+            )?;
+            Ok(stats)
+        }
     }
 }

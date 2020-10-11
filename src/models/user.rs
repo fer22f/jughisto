@@ -1,12 +1,11 @@
+use diesel::insert_into;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use serde::Serialize;
 use std::env;
 use thiserror::Error;
 
-use crate::schema::user as user_column;
 use crate::schema::user;
-use crate::schema::user::dsl::user as user_table;
 
 #[derive(Queryable)]
 struct UserWithHashedPassword {
@@ -22,8 +21,8 @@ pub struct User {
     pub name: String,
     pub is_admin: bool,
 }
-const USER_COLUMNS: (user_column::id, user_column::name, user_column::is_admin) =
-    (user_column::id, user_column::name, user_column::is_admin);
+const USER_COLUMNS: (user::id, user::name, user::is_admin) =
+    (user::id, user::name, user::is_admin);
 
 #[derive(Insertable)]
 #[table_name = "user"]
@@ -40,10 +39,10 @@ pub struct NewUser<'a> {
 }
 
 pub fn get_user_by_name(connection: &SqliteConnection, name: &str) -> QueryResult<User> {
-    user_table
+    user::table
         .select(USER_COLUMNS)
-        .filter(user_column::name.eq(name))
-        .first::<User>(connection)
+        .filter(user::name.eq(name))
+        .first(connection)
 }
 
 #[derive(Error, Debug)]
@@ -57,7 +56,7 @@ pub enum UserHashingError {
 pub enum PasswordMatched {
     UserDoesntExist,
     PasswordDoesntMatch,
-    PasswordMatches(QueryResult<User>),
+    PasswordMatches(User),
 }
 
 pub fn check_matching_password(
@@ -65,14 +64,14 @@ pub fn check_matching_password(
     name: &str,
     password: &str,
 ) -> Result<PasswordMatched, UserHashingError> {
-    match user_table
-        .filter(user_column::name.eq(name))
+    match user::table
+        .filter(user::name.eq(name))
         .first::<UserWithHashedPassword>(connection)
         .optional()?
     {
         Some(user) => Ok(
             if argon2::verify_encoded(&user.hashed_password, password.as_bytes())? {
-                PasswordMatched::PasswordMatches(get_user_by_name(&connection, &name))
+                PasswordMatched::PasswordMatches(get_user_by_name(&connection, &name)?)
             } else {
                 PasswordMatched::PasswordDoesntMatch
             },
@@ -100,7 +99,7 @@ pub fn insert_new_user(
         &config,
     )?;
 
-    diesel::insert_into(user_table)
+    insert_into(user::table)
         .values(DatabaseNewUser {
             name,
             hashed_password: &hashed_password,
@@ -112,5 +111,5 @@ pub fn insert_new_user(
 }
 
 pub fn get_users(connection: &SqliteConnection) -> QueryResult<Vec<User>> {
-    user_table.select(USER_COLUMNS).load::<User>(connection)
+    user::table.select(USER_COLUMNS).load(connection)
 }

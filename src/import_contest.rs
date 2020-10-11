@@ -275,9 +275,9 @@ mod xml {
 
         #[derive(Deserialize, Debug)]
         pub struct Validator {
-            source: Source,
-            binary: Binary,
-            testset: ValidatorTestset,
+            pub source: Source,
+            pub binary: Binary,
+            pub testset: ValidatorTestset,
         }
 
         #[derive(Deserialize, Debug)]
@@ -362,7 +362,12 @@ fn read_string_from_zip_by_name<R: Read + Seek>(
     Ok(content)
 }
 
-pub fn import_file<R: Read + Seek>(reader: R) -> Result<String, ImportContestError> {
+pub use xml::contest::Contest;
+pub use xml::problem::Problem;
+
+pub fn import_file<R: Read + Seek>(
+    reader: R,
+) -> Result<(Contest, Vec<Problem>, String), ImportContestError> {
     let mut report = String::new();
 
     let mut zip = ZipArchive::new(reader)?;
@@ -370,6 +375,8 @@ pub fn import_file<R: Read + Seek>(reader: R) -> Result<String, ImportContestErr
 
     report.push_str(&format!("{:#?}", contest));
     report.push_str("\n---\n");
+
+    let mut problems: Vec<Problem> = Vec::new();
 
     let problem_xml_path_regex = Regex::new(r"^problems/.*/problem.xml$").unwrap();
     for name in zip
@@ -386,7 +393,9 @@ pub fn import_file<R: Read + Seek>(reader: R) -> Result<String, ImportContestErr
         report.push_str(&read_string_from_zip_by_name(&mut zip, &name)?);
         report.push_str("---\n");
         report.push_str("\n");
+
+        problems.push(problem);
     }
 
-    Ok(report)
+    Ok((contest, problems, report))
 }

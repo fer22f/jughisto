@@ -4,7 +4,7 @@
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
     <div class="lds-hourglass"></div>
-    <div class="verdict">WJ</div> · {{ this.problem }} · {{ this.formatted_date_time }}
+    <div class="verdict">WJ</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
 </div>
 {{ /if }}
@@ -12,7 +12,7 @@
 <div id="submission-{{ this.uuid }}" class="submission accepted">
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
-    <div class="verdict">AC</div> · {{ this.problem }} · {{ this.formatted_date_time }}
+    <div class="verdict">AC</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
 </div>
 {{ /if }}
@@ -20,7 +20,7 @@
 <div id="submission-{{ this.uuid }}" class="submission wrong-answer">
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
-    <div class="verdict">WA</div> · {{ this.problem }} · {{ this.formatted_date_time }}
+    <div class="verdict">WA</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
 </div>
 {{ /if }}
@@ -28,15 +28,16 @@
 <div id="submission-{{ this.uuid }}" class="submission runtime-error">
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
-    <div class="verdict">RE</div> · A · 06/10/2020 22:43:43
+    <div class="verdict">RE</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
+  <div class="compilation-result">{{ this.error_output }}</div>
 </div>
 {{ /if }}
 {{ #if (eq this.verdict "ML") }}
 <div id="submission-{{ this.uuid }}" class="submission memory-limit">
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
-    <div class="verdict">ML</div> · A · 06/10/2020 22:43:43
+    <div class="verdict">ML</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
 </div>
 {{ /if }}
@@ -44,7 +45,7 @@
 <div id="submission-{{ this.uuid }}" class="submission time-limit">
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
-    <div class="verdict">TL</div> · A · 06/10/2020 22:43:43
+    <div class="verdict">TL</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
 </div>
 {{ /if }}
@@ -52,7 +53,7 @@
 <div id="submission-{{ this.uuid }}" class="submission presentation-error">
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
-    <div class="verdict">PE</div> · A · 06/10/2020 22:43:43
+    <div class="verdict">PE</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
 </div>
 {{ /if }}
@@ -60,9 +61,9 @@
 <div id="submission-{{ this.uuid }}" class="submission compilation-error">
   <div class="uuid">{{ this.uuid }}</div>
   <div class="description">
-    <div class="verdict">CE</div> · A · 06/10/2020 22:43:43
+    <div class="verdict">CE</div> · {{ this.problem_label }} · {{ this.submission_instant }}
   </div>
-  <div class="compilation-result">{{ this.compilation_stderr }}</div>
+  <div class="compilation-result">{{ this.error_output }}</div>
 </div>
 {{ /if }}
 {{ /each }}
