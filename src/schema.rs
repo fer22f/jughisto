@@ -4,6 +4,8 @@ table! {
         name -> Text,
         start_instant -> Nullable<Timestamp>,
         end_instant -> Nullable<Timestamp>,
+        creation_user_id -> Integer,
+        creation_instant -> Timestamp,
     }
 }
 
@@ -30,6 +32,8 @@ table! {
         main_solution_language -> Text,
         test_count -> Integer,
         status -> Text,
+        creation_user_id -> Integer,
+        creation_instant -> Timestamp,
     }
 }
 
@@ -57,18 +61,16 @@ table! {
         name -> Text,
         hashed_password -> Text,
         is_admin -> Bool,
+        creation_user_id -> Nullable<Integer>,
+        creation_instant -> Timestamp,
     }
 }
 
+joinable!(contest -> user (creation_user_id));
 joinable!(contest_problems -> contest (contest_id));
 joinable!(contest_problems -> problem (problem_id));
+joinable!(problem -> user (creation_user_id));
 joinable!(submission -> contest_problems (contest_problem_id));
 joinable!(submission -> user (user_id));
 
-allow_tables_to_appear_in_same_query!(
-    contest,
-    contest_problems,
-    problem,
-    submission,
-    user,
-);
+allow_tables_to_appear_in_same_query!(contest, contest_problems, problem, submission, user,);

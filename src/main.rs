@@ -20,6 +20,7 @@ use actix_web::HttpResponse;
 use chrono::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use handlebars::Handlebars;
+use log::error;
 use models::submission;
 use models::user;
 
@@ -34,12 +35,11 @@ mod setup;
 
 use broadcaster::Broadcaster;
 use listenfd::ListenFd;
-use log::{error, info};
 use std::sync::Mutex;
 use std::thread;
 type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
-use std::time::Duration;
 use chrono_tz::Tz;
+use std::time::Duration;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
@@ -93,8 +93,10 @@ async fn main() -> io::Result<()> {
             .send("update_submission", &uuid);
     });
 
-    let tz: Tz = env::var("TZ").expect("TZ environment variable is not set")
-        .parse().expect("Invalid timezone in environment variable TZ");
+    let tz: Tz = env::var("TZ")
+        .expect("TZ environment variable is not set")
+        .parse()
+        .expect("Invalid timezone in environment variable TZ");
 
     let mut listenfd = ListenFd::from_env();
     let mut server = HttpServer::new(move || {
@@ -165,7 +167,6 @@ enum PostError {
     #[error("couldn't fetch result from database")]
     Database(#[from] diesel::result::Error),
 }
-
 
 fn error_response_and_log(me: &impl actix_web::error::ResponseError) -> HttpResponse {
     use std::fmt::Write;
@@ -272,11 +273,12 @@ fn render_400(
         async move {
             let response = redirect_to_referer(
                 match res.take_body() {
-                    actix_web::dev::ResponseBody::Body(actix_web::dev::Body::Bytes(bytes)) =>
-                        String::from_utf8((&bytes).to_vec()).unwrap(),
-                    _ => "Entrada inválida".into()
+                    actix_web::dev::ResponseBody::Body(actix_web::dev::Body::Bytes(bytes)) => {
+                        String::from_utf8((&bytes).to_vec()).unwrap()
+                    }
+                    _ => "Entrada inválida".into(),
                 },
-                res.request()
+                res.request(),
             )
             .respond_to(res.request())
             .await?;
@@ -307,7 +309,7 @@ async fn get_contest_by_id(
     hb: web::Data<Handlebars<'_>>,
     languages: web::Data<Arc<HashMap<String, LanguageParams>>>,
     session: Session,
-    path: web::Path<(i32, )>,
+    path: web::Path<(i32,)>,
     tz: web::Data<Tz>,
 ) -> GetResult {
     get_identity(identity)?;
@@ -431,10 +433,7 @@ fn format_utc_date_time(tz: &Tz, input: NaiveDateTime) -> String {
         .to_string()
 }
 
-fn format_submission(
-    tz: &Tz,
-    submission: &models::submission::Submission,
-) -> FormattedSubmission {
+fn format_submission(tz: &Tz, submission: &models::submission::Submission) -> FormattedSubmission {
     FormattedSubmission {
         uuid: (&submission.uuid).into(),
         verdict: submission
@@ -500,8 +499,15 @@ struct SubmissionState {
 use actix_web::HttpRequest;
 
 fn redirect_to_referer(message: String, request: &HttpRequest) -> PostResult {
-    let referer = request.headers().get("Referer").ok_or(PostError::Validation("Cabeçalho Referer inexistente".into()))?;
-    let referer_str = referer.to_str().map_err(|_| PostError::Validation("Cabeçalho Referer inválido".into()))?;
+    let referer = request
+        .headers()
+        .get("Referer")
+        .ok_or(PostError::Validation(
+            "Cabeçalho Referer inexistente".into(),
+        ))?;
+    let referer_str = referer
+        .to_str()
+        .map_err(|_| PostError::Validation("Cabeçalho Referer inválido".into()))?;
     Ok(actix_flash::Response::with_redirect(message, referer_str))
 }
 
@@ -543,10 +549,7 @@ async fn create_submission(
 
     session.set("language", &form.language)?;
 
-    redirect_to_referer(
-        format!("Submetido {} com sucesso!", uuid),
-        &request
-    )
+    redirect_to_referer(format!("Submetido {} com sucesso!", uuid), &request)
 }
 
 #[get("/contests/manage")]
@@ -570,26 +573,28 @@ async fn manage_contests(
 
     #[derive(Serialize)]
     struct ManageContestsContext {
-        contests: Vec<FormattedContest>
+        contests: Vec<FormattedContest>,
     }
 
     Ok(HttpResponse::Ok().body(
         hb.render(
             "manage_contests",
             &ManageContestsContext {
-                contests: contests.iter().map(|c| FormattedContest {
-                    id: c.id,
-                    name: c.name.clone(),
-                    start_instant: c.start_instant.map(|i| format_utc_date_time(&tz, i)),
-                    end_instant: c.end_instant.map(|i| format_utc_date_time(&tz, i)),
-                }).collect()
-            }
-        )?
+                contests: contests
+                    .iter()
+                    .map(|c| FormattedContest {
+                        id: c.id,
+                        name: c.name.clone(),
+                        start_instant: c.start_instant.map(|i| format_utc_date_time(&tz, i)),
+                        end_instant: c.end_instant.map(|i| format_utc_date_time(&tz, i)),
+                    })
+                    .collect(),
+            },
+        )?,
     ))
 }
 
 use crate::models::contest;
-use crate::models::contest::Contest;
 use actix_multipart::Multipart;
 use futures::StreamExt;
 use futures::TryStreamExt;
@@ -605,7 +610,7 @@ async fn create_contest(
     pool: web::Data<DbPool>,
     mut payload: Multipart,
 ) -> PostResult {
-    get_identity(identity)?;
+    let identity = get_identity(identity)?;
 
     #[derive(Debug)]
     struct Form {
@@ -667,6 +672,8 @@ async fn create_contest(
             name: form.name.unwrap(),
             start_instant: form.start_instant.and_then(|s| s.parse().ok()),
             end_instant: form.end_instant.and_then(|s| s.parse().ok()),
+            creation_instant: Local::now().naive_local(),
+            creation_user_id: identity.id,
         },
     )?;
 
@@ -675,14 +682,13 @@ async fn create_contest(
             .replace("/", ".")
     }
 
-    let problem_label: HashMap<String, String> = HashMap::from_iter(
-        imported
-            .0
-            .problems
-            .problem
-            .iter()
-            .map(|problem| (polygon_url_to_id_without_revision(problem.url.clone()), problem.index.clone())),
-    );
+    let problem_label: HashMap<String, String> =
+        HashMap::from_iter(imported.0.problems.problem.iter().map(|problem| {
+            (
+                polygon_url_to_id_without_revision(problem.url.clone()),
+                problem.index.clone(),
+            )
+        }));
 
     for problem in imported.1 {
         let problem_id_without_revision = polygon_url_to_id_without_revision(problem.url);
@@ -706,6 +712,8 @@ async fn create_contest(
                 main_solution_language: problem.assets.solutions.solution[0].source.r#type.clone(),
                 test_count: problem.judging.testset[0].test_count.value.parse().unwrap(),
                 status: "unpacked".into(),
+                creation_instant: Local::now().naive_local(),
+                creation_user_id: identity.id,
             },
         )?;
         contest::relate_problem(

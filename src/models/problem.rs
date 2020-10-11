@@ -1,12 +1,13 @@
+use chrono::prelude::*;
 use diesel::insert_into;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use serde::Serialize;
 
-use crate::schema::problem;
 use crate::schema::contest_problems;
+use crate::schema::problem;
 
-#[derive(Queryable, Serialize)]
+#[derive(Queryable)]
 pub struct Problem {
     pub id: String,
     pub name: String,
@@ -20,6 +21,8 @@ pub struct Problem {
     pub main_solution_language: String,
     pub test_count: i32,
     pub status: String,
+    pub creation_user_id: i32,
+    pub creation_instant: NaiveDateTime,
 }
 
 #[derive(Insertable)]
@@ -37,10 +40,8 @@ pub struct NewProblem {
     pub main_solution_language: String,
     pub test_count: i32,
     pub status: String,
-}
-
-pub fn get_problems(connection: &SqliteConnection) -> QueryResult<Vec<Problem>> {
-    problem::table.load(connection)
+    pub creation_user_id: i32,
+    pub creation_instant: NaiveDateTime,
 }
 
 #[derive(Queryable, Serialize)]
@@ -50,15 +51,14 @@ pub struct ProblemByContest {
     pub label: String,
 }
 
-pub fn get_problems_by_contest_id(connection: &SqliteConnection, contest_id: i32) -> QueryResult<Vec<ProblemByContest>> {
+pub fn get_problems_by_contest_id(
+    connection: &SqliteConnection,
+    contest_id: i32,
+) -> QueryResult<Vec<ProblemByContest>> {
     problem::table
         .inner_join(contest_problems::table)
         .filter(contest_problems::contest_id.eq(contest_id))
-        .select((
-            contest_problems::id,
-            problem::name,
-            contest_problems::label,
-        ))
+        .select((contest_problems::id, problem::name, contest_problems::label))
         .order(contest_problems::label)
         .load(connection)
 }

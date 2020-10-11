@@ -1,7 +1,6 @@
 use chrono::prelude::*;
 use diesel::insert_into;
 use diesel::prelude::*;
-use serde::Serialize;
 
 use crate::schema::contest;
 use crate::schema::contest_problems;
@@ -12,6 +11,8 @@ pub struct Contest {
     pub name: String,
     pub start_instant: Option<NaiveDateTime>,
     pub end_instant: Option<NaiveDateTime>,
+    pub creation_user_id: i32,
+    pub creation_instant: NaiveDateTime,
 }
 
 #[table_name = "contest"]
@@ -20,6 +21,8 @@ pub struct NewContest {
     pub name: String,
     pub start_instant: Option<NaiveDateTime>,
     pub end_instant: Option<NaiveDateTime>,
+    pub creation_user_id: i32,
+    pub creation_instant: NaiveDateTime,
 }
 
 pub fn insert_contest(
@@ -29,14 +32,10 @@ pub fn insert_contest(
     insert_into(contest::table)
         .values(new_contest)
         .execute(connection)?;
-    contest::table
-        .order(contest::id.desc())
-        .first(connection)
+    contest::table.order(contest::id.desc()).first(connection)
 }
 
-pub fn get_contests(
-    connection: &SqliteConnection,
-) -> QueryResult<Vec<Contest>> {
+pub fn get_contests(connection: &SqliteConnection) -> QueryResult<Vec<Contest>> {
     contest::table.load(connection)
 }
 

@@ -1,7 +1,7 @@
-use chrono::prelude::*;
-use diesel::prelude::*;
-use diesel::insert_into;
 use crate::schema::submission;
+use chrono::prelude::*;
+use diesel::insert_into;
+use diesel::prelude::*;
 
 #[derive(Queryable)]
 pub struct Submission {

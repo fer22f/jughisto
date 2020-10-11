@@ -1,3 +1,4 @@
+use chrono::prelude::*;
 use dotenv::dotenv;
 use log::info;
 use which::which;
@@ -27,6 +28,8 @@ pub fn setup_admin(connection: &SqliteConnection) {
                     name: admin_user_name,
                     password: admin_user_password,
                     is_admin: true,
+                    creation_instant: Local::now().naive_local(),
+                    creation_user_id: None,
                 },
             )
             .expect("Error saving new user");
