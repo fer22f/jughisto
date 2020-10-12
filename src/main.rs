@@ -11,6 +11,7 @@ use actix_web::middleware::errhandlers::{ErrorHandlerResponse, ErrorHandlers};
 use actix_web::{dev, get, http, middleware, post, web, App, HttpServer};
 use diesel::SqliteConnection;
 use std::env;
+use std::fs::File;
 use std::io;
 use uuid::Uuid;
 
@@ -20,7 +21,7 @@ use actix_web::HttpResponse;
 use chrono::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use handlebars::Handlebars;
-use log::error;
+use log::{error, info};
 use models::submission;
 use models::user;
 
@@ -166,6 +167,10 @@ enum PostError {
     Queue(#[from] crossbeam::SendError<queue::Submission>),
     #[error("couldn't fetch result from database")]
     Database(#[from] diesel::result::Error),
+    #[error("couldn't work with the filesystem")]
+    Io(#[from] std::io::Error),
+    #[error("couldn't work with the zip")]
+    Zip(#[from] zip::result::ZipError),
 }
 
 fn error_response_and_log(me: &impl actix_web::error::ResponseError) -> HttpResponse {
@@ -194,7 +199,9 @@ impl actix_web::error::ResponseError for PostError {
             | PostError::ConnectionPool(_)
             | PostError::Web(_)
             | PostError::Queue(_)
-            | PostError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | PostError::Database(_)
+            | PostError::Io(_)
+            | PostError::Zip(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -322,7 +329,7 @@ async fn get_contest_by_id(
     }
 
     #[derive(Serialize)]
-    struct IndexContext {
+    struct ContestContext {
         languages: Vec<Language>,
         language: Option<String>,
         problems: Vec<ProblemByContest>,
@@ -345,8 +352,8 @@ async fn get_contest_by_id(
 
     Ok(HttpResponse::Ok().body(
         hb.render(
-            "index",
-            &IndexContext {
+            "contest",
+            &ContestContext {
                 languages,
                 problems,
                 language: session.get("language")?,
@@ -406,7 +413,7 @@ async fn post_login(
     }
 }
 
-#[get("/submission_updates")]
+#[get("/submission_updates/")]
 async fn submission_updates(broadcaster: web::Data<Mutex<Broadcaster>>) -> HttpResponse {
     let rx = broadcaster
         .lock()
@@ -448,7 +455,7 @@ fn format_submission(tz: &Tz, submission: &models::submission::Submission) -> Fo
     }
 }
 
-#[get("/submissions")]
+#[get("/submissions/")]
 async fn get_submissions(
     identity: Identity,
     pool: web::Data<DbPool>,
@@ -511,7 +518,7 @@ fn redirect_to_referer(message: String, request: &HttpRequest) -> PostResult {
     Ok(actix_flash::Response::with_redirect(message, referer_str))
 }
 
-#[post("/submissions")]
+#[post("/submissions/")]
 async fn create_submission(
     identity: Identity,
     form: web::Form<SubmissionForm>,
@@ -552,7 +559,7 @@ async fn create_submission(
     redirect_to_referer(format!("Submetido {} com sucesso!", uuid), &request)
 }
 
-#[get("/contests/manage")]
+#[get("/contests/")]
 async fn manage_contests(
     identity: Identity,
     pool: web::Data<DbPool>,
@@ -569,17 +576,18 @@ async fn manage_contests(
         pub name: String,
         pub start_instant: Option<String>,
         pub end_instant: Option<String>,
+        pub creation_instant: String,
     }
 
     #[derive(Serialize)]
-    struct ManageContestsContext {
+    struct ContestsContext {
         contests: Vec<FormattedContest>,
     }
 
     Ok(HttpResponse::Ok().body(
         hb.render(
-            "manage_contests",
-            &ManageContestsContext {
+            "contests",
+            &ContestsContext {
                 contests: contests
                     .iter()
                     .map(|c| FormattedContest {
@@ -587,6 +595,7 @@ async fn manage_contests(
                         name: c.name.clone(),
                         start_instant: c.start_instant.map(|i| format_utc_date_time(&tz, i)),
                         end_instant: c.end_instant.map(|i| format_utc_date_time(&tz, i)),
+                        creation_instant: format_utc_date_time(&tz, c.creation_instant),
                     })
                     .collect(),
             },
@@ -598,13 +607,15 @@ use crate::models::contest;
 use actix_multipart::Multipart;
 use futures::StreamExt;
 use futures::TryStreamExt;
+use regex::Regex;
+use std::fs::create_dir_all;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
 use std::iter::FromIterator;
 use std::str;
 
-#[post("/manage/contests")]
+#[post("/contests/")]
 async fn create_contest(
     identity: Identity,
     pool: web::Data<DbPool>,
@@ -690,9 +701,58 @@ async fn create_contest(
             )
         }));
 
-    for problem in imported.1 {
+    let mut zip = imported.2;
+
+    for (name, problem) in imported.1 {
         let problem_id_without_revision = polygon_url_to_id_without_revision(problem.url);
         let problem_id = format!("{}.r{}", problem_id_without_revision, &problem.revision);
+
+        let files_regex: Regex = Regex::new(
+            &format!(concat!(
+                "^{}/(",
+                    r"files/$|",
+                    r"files/.*\.cpp$|",
+                    r"files/.*\.h$|",
+                    r"files/tests/$|",
+                    r"files/tests/validator-tests/$|",
+                    r"files/tests/validator-tests/.*$|",
+                    r"files/tests/validator-tests/.*$|",
+                    r"solutions/$|",
+                    r"solutions/.*.cpp$|",
+                    r"statements/$|",
+                    r"statements/.html/.*$|",
+                    r"tests/.*$",
+                ")"
+            ), name)
+        ).unwrap();
+        let mut filenames = zip
+            .file_names()
+            .filter(|name| files_regex.is_match(name))
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        filenames.sort();
+        for name in filenames {
+            let relative_path = files_regex
+                .captures(&name)
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .as_str();
+            let data_path = format!("./data/{}/{}", problem_id, relative_path);
+
+            if name.ends_with("/") {
+                info!("Creating directory {} into {}", name, data_path);
+                create_dir_all(data_path)?;
+                continue;
+            }
+
+            info!("Putting file {} into {}", name, data_path);
+            std::io::copy(
+                &mut zip.by_name(&name)?,
+                &mut File::create(data_path)?,
+            )?;
+        }
+
         problem::upsert_problem(
             &connection,
             problem::NewProblem {
@@ -734,6 +794,6 @@ async fn create_contest(
 
     Ok(actix_flash::Response::new(
         None,
-        HttpResponse::Ok().body(imported.2),
+        HttpResponse::Ok().body(imported.3),
     ))
 }

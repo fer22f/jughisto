@@ -12,23 +12,25 @@
       <tr>
         <th>ID</th>
         <th>Nome</th>
-        <th>Momento do Início</th>
-        <th>Momento do Final</th>
+        <th class="right">Momento do Início</th>
+        <th class="right">Momento do Final</th>
+        <th class="right">Momento da Criação</th>
       </tr>
     </thead>
     <tbody>
       {{ #each contests }}
       <tr>
-        <td>{{ this.id }}</td>
-        <td>{{ this.name }}</td>
-        <td>{{ this.formatted_start_instant }}</td>
-        <td>{{ this.formatted_end_instant }}</td>
+        <td><a href="/contests/{{ this.id }}">{{ this.id }}</td>
+        <td><a href="/contests/{{ this.id }}">{{ this.name }}</a></td>
+        <td class="right"><a href="/contests/{{ this.id }}">{{ this.start_instant }}</a></td>
+        <td class="right"><a href="/contests/{{ this.id }}">{{ this.end_instant }}</a></td>
+        <td class="right"><a href="/contests/{{ this.id }}">{{ this.creation_instant }}</a></td>
       </tr>
       {{ /each }}
     </tbody>
   </table>
 
-  <form class="main" enctype="multipart/form-data" method="post" action="/manage/contests">
+  <form class="main" enctype="multipart/form-data" method="post" action="/contests/">
     <label for="name">
       Nome
     </label>

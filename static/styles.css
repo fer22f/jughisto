@@ -163,3 +163,34 @@ form.main {
   background: #777;
   color: white;
 }
+
+table {
+  border: 1px solid #ddd;
+  border-collapse: collapse;
+}
+
+th {
+  padding: 8px;
+}
+
+th.right, td.right {
+  text-align: right;
+}
+
+tr {
+  height: 16px;
+}
+
+td {
+  height: 16px;
+  border-top: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+  padding: 0;
+}
+
+table a {
+  display: block;
+  height: 16px;
+  padding: 8px;
+  text-decoration: none;
+}

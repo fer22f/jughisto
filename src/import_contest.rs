@@ -1,3 +1,4 @@
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::io::{Read, Seek};
 use zip::ZipArchive;
@@ -367,7 +368,7 @@ pub use xml::problem::Problem;
 
 pub fn import_file<R: Read + Seek>(
     reader: R,
-) -> Result<(Contest, Vec<Problem>, String), ImportContestError> {
+) -> Result<(Contest, Vec<(String, Problem)>, ZipArchive<R>, String), ImportContestError> {
     let mut report = String::new();
 
     let mut zip = ZipArchive::new(reader)?;
@@ -376,14 +377,18 @@ pub fn import_file<R: Read + Seek>(
     report.push_str(&format!("{:#?}", contest));
     report.push_str("\n---\n");
 
-    let mut problems: Vec<Problem> = Vec::new();
+    let mut problems: Vec<(String, Problem)> = Vec::new();
 
-    let problem_xml_path_regex = Regex::new(r"^problems/.*/problem.xml$").unwrap();
+    lazy_static! {
+        static ref PROBLEM_XML_PATH_REGEX: Regex =
+            Regex::new(r"^(problems/.*)/problem.xml$").unwrap();
+    }
+
     for name in zip
         .file_names()
-        .filter(|name| problem_xml_path_regex.is_match(name))
-        .map(|s| s.to_string())
-        .collect::<Vec<_>>()
+        .filter(|name| PROBLEM_XML_PATH_REGEX.is_match(name))
+        .map(|s| s.into())
+        .collect::<Vec<String>>()
     {
         report.push_str(&name);
         let problem = xml::problem::get_from_zip(&mut zip, &name)?;
@@ -394,8 +399,17 @@ pub fn import_file<R: Read + Seek>(
         report.push_str("---\n");
         report.push_str("\n");
 
-        problems.push(problem);
+        problems.push((
+            PROBLEM_XML_PATH_REGEX
+                .captures(&name)
+                .unwrap()
+                .get(1)
+                .unwrap()
+                .as_str()
+                .into(),
+            problem,
+        ));
     }
 
-    Ok((contest, problems, report))
+    Ok((contest, problems, zip, report))
 }
