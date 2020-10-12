@@ -1,11 +1,11 @@
-use std::fs;
+use log::info;
 use std::io;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str;
 use thiserror::Error;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CommandTuple {
     pub binary_path: PathBuf,
     pub args: Vec<String>,
@@ -55,9 +55,10 @@ pub fn create_box(isolate_executable_path: &PathBuf, id: i32) -> Result<IsolateB
 }
 
 pub struct RunParams<'a> {
-    pub memory_limit_mib: i32,
+    pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
-    pub stdin: bool,
+    pub stdin_path: Option<&'a PathBuf>,
+    pub uuid: &'a str,
     pub restricted: bool,
     pub command: &'a CommandTuple,
 }
@@ -89,10 +90,11 @@ pub struct RunStats<R: Read> {
     pub stderr: R,
 }
 
-pub struct ExecuteParams {
-    pub memory_limit_mib: i32,
+pub struct ExecuteParams<'a> {
+    pub uuid: &'a str,
+    pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
-    pub stdin: PathBuf,
+    pub stdin_path: &'a PathBuf,
 }
 
 use std::str::FromStr;
@@ -105,16 +107,14 @@ pub fn execute(
     command: &CommandTuple,
     execute_params: &ExecuteParams,
 ) -> Result<RunStats<File>, CommandError> {
-    let stdin_path = isolate_box.path.join("stdin");
-    fs::copy(&execute_params.stdin, &stdin_path).map_err(CommandError::CopyIo)?;
-
     run(
         isolate_executable_path,
         isolate_box,
         RunParams {
-            stdin: true,
+            uuid: execute_params.uuid,
+            stdin_path: Some(execute_params.stdin_path),
             restricted: true,
-            memory_limit_mib: execute_params.memory_limit_mib,
+            memory_limit_kib: execute_params.memory_limit_kib,
             time_limit_ms: execute_params.time_limit_ms,
             command,
         },
@@ -126,8 +126,15 @@ pub fn run(
     isolate_box: &IsolateBox,
     run_params: RunParams,
 ) -> Result<RunStats<File>, CommandError> {
+    let in_data_dir = PathBuf::from(format!("/data-{}", run_params.uuid));
+    let out_data_dir = PathBuf::from("./data").canonicalize().unwrap();
+    let stdin_path = run_params
+        .stdin_path
+        .map(|stdin_path| in_data_dir.join(stdin_path.strip_prefix("./data").unwrap()));
+    info!("Binding in {:?} to out {:?}", in_data_dir, out_data_dir);
+    info!("Using stdin path {:?}", stdin_path);
+
     let output = Command::new(isolate_executable_path)
-        .current_dir(&isolate_box.path)
         .arg("--run")
         .arg("--cg")
         .arg(format!("--box-id={}", isolate_box.id))
@@ -143,10 +150,10 @@ pub fn run(
         ))
         .arg(format!(
             "--mem={}",
-            /* input is in KiB */ run_params.memory_limit_mib * 1024
+            /* input is in KiB */ run_params.memory_limit_kib
         ))
-        .args(if run_params.stdin {
-            vec!["--stdin=stdin"]
+        .args(if let Some(stdin_path) = stdin_path {
+            vec![format!("--stdin={}", stdin_path.to_str().unwrap())]
         } else {
             vec![]
         })
@@ -155,7 +162,10 @@ pub fn run(
         .arg("--meta=-")
         .arg("--env=PATH=/usr/bin")
         .arg("--no-default-dirs")
-        .arg("--dir=box=./box:rw")
+        .arg(format!(
+            "--dir=box={}:rw",
+            isolate_box.path.to_str().unwrap()
+        ))
         .arg("--dir=bin")
         .arg("--dir=lib")
         .arg("--dir=lib64:maybe")
@@ -165,11 +175,16 @@ pub fn run(
         .arg("--dir=usr/include")
         .arg("--dir=usr/include")
         .arg("--dir=proc=proc:fs")
+        .arg(format!(
+            "--dir={}={}",
+            in_data_dir.to_str().unwrap(),
+            out_data_dir.to_str().unwrap()
+        ))
+        .arg("--processes=40") // A reasonable amount of processes
         .args(if run_params.restricted {
-            vec!["--processes=0"] // Unlimited processes
-                                  // vec!["--fsize=0"] // Don't write to the disk at all
+            vec!["--fsize=0"] // Don't write to the disk at all
         } else {
-            vec!["--processes=0"] // Unlimited processes
+            vec![]
         })
         .arg("--")
         .arg(&run_params.command.binary_path)
@@ -249,7 +264,7 @@ pub fn run(
     if stats.status == RunStatus::Signal
         && stats.exit_signal == Some(6)
         && match stats.memory_kib {
-            Some(memory_kib) => memory_kib >= run_params.memory_limit_mib * 1024,
+            Some(memory_kib) => memory_kib >= run_params.memory_limit_kib,
             _ => false,
         }
     {
@@ -260,7 +275,8 @@ pub fn run(
 }
 
 pub struct CompileParams<'a> {
-    pub memory_limit_mib: i32,
+    pub uuid: &'a str,
+    pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
     pub command: &'a CommandTuple,
 }
@@ -274,9 +290,10 @@ pub fn compile(
         isolate_executable_path,
         isolate_box,
         RunParams {
-            stdin: false,
+            uuid: compile_params.uuid,
+            stdin_path: None,
             restricted: false,
-            memory_limit_mib: compile_params.memory_limit_mib,
+            memory_limit_kib: compile_params.memory_limit_kib,
             time_limit_ms: compile_params.time_limit_ms,
             command: compile_params.command,
         },

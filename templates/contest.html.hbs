@@ -57,7 +57,7 @@ form.main {
 
   <div id="submissions">
     Submissões
-    <div id="submissions-list" hx-get="/submissions" hx-trigger="load, sse:update_submission">
+    <div id="submissions-list" hx-get="/submissions/" hx-trigger="load, sse:update_submission">
     {{> submissions }}
     </div>
   </div>

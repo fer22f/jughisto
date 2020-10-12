@@ -58,7 +58,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
 
         LanguageParams {
             order,
-            suffix: "".into(),
+            suffix: ".cpp".into(),
             name: name.replace("{}", version),
             compile: Compile::Command(CommandTuple {
                 binary_path,
@@ -80,9 +80,9 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                     "-O2".into(),
                     // Output to exe
                     "-o".into(),
-                    "exe".into(),
+                    "{output}".into(),
                     // Input from source
-                    "source".into(),
+                    "{source}".into(),
                 ],
             }),
             run: Run::RunExe,
@@ -103,7 +103,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
         LanguageParams {
             order: 6,
             name: "Free Pascal".into(),
-            suffix: "".into(),
+            suffix: ".pas".into(),
             compile: Compile::Command(CommandTuple {
                 binary_path: "/usr/bin/fpc".into(),
                 args: vec![
@@ -123,8 +123,8 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                     "-Cs67107839".into(),
                     // Language mode: Delphi compatibility
                     "-Mdelphi".into(),
-                    "source".into(),
-                    "-oexe".into(),
+                    "{source}".into(),
+                    "-o{output}".into(),
                 ],
             }),
             run: Run::RunExe,
@@ -156,7 +156,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                         "-J-Xmx512m".into(),
                         "-J-XX:MaxMetaspaceSize=128m".into(),
                         "-J-XX:CompressedClassSpaceSize=64m".into(),
-                        "source.java".into(),
+                        "{source}".into(),
                     ],
                 },
             ),
@@ -169,7 +169,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                     "-Duser.language=en".into(),
                     "-Duser.region=US".into(),
                     "-Duser.variant=US".into(),
-                    "source".into(),
+                    "{program}".into(),
                 ],
             }),
         },
@@ -179,11 +179,11 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
         LanguageParams {
             order: 8,
             name: "Python 3".into(),
-            suffix: "".into(),
+            suffix: ".py".into(),
             compile: Compile::NoCompile,
             run: Run::Command(CommandTuple {
                 binary_path: "/usr/bin/python3".into(),
-                args: vec!["source".into()],
+                args: vec!["{program}".into()],
             }),
         },
     );
@@ -196,6 +196,7 @@ pub fn compile_source<R>(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     language: &LanguageParams,
+    uuid: &str,
     reader: &mut R,
 ) -> Result<Option<isolate::RunStats<File>>, CommandError>
 where
@@ -205,14 +206,11 @@ where
         return Ok(None);
     }
 
-    let source_name = "source";
+    let program_name = "program";
+    let source_name = format!("{}{}", program_name, language.suffix);
 
-    let mut source_file = File::create(
-        isolate_box
-            .path
-            .join(format!("{}{}", source_name, language.suffix)),
-    )
-    .map_err(CommandError::CopyIo)?;
+    let mut source_file =
+        File::create(isolate_box.path.join(&source_name)).map_err(CommandError::CopyIo)?;
 
     if let Compile::TransformAndCommand(transform, _) = language.compile {
         let mut string = String::new();
@@ -220,7 +218,7 @@ where
             .read_to_string(&mut string)
             .map_err(CommandError::CopyIo)?;
         source_file
-            .write(transform(string, source_name.into()).as_bytes())
+            .write(transform(string, program_name.into()).as_bytes())
             .map_err(CommandError::CopyIo)?;
     } else {
         io::copy(reader, &mut source_file).map_err(CommandError::CopyIo)?;
@@ -228,14 +226,51 @@ where
 
     source_file.sync_data().map_err(CommandError::CopyIo)?;
 
+    compile(
+        isolate_executable_path,
+        isolate_box,
+        language,
+        uuid,
+        &PathBuf::from("/box/").join(&source_name),
+        &PathBuf::from("/box/").join(&program_name),
+    )
+}
+
+use log::info;
+
+pub fn compile(
+    isolate_executable_path: &PathBuf,
+    isolate_box: &IsolateBox,
+    language: &LanguageParams,
+    uuid: &str,
+    source: &PathBuf,
+    output: &PathBuf,
+) -> Result<Option<isolate::RunStats<File>>, CommandError> {
     match &language.compile {
         Compile::Command(command) | Compile::TransformAndCommand(_, command) => {
+            let command = CommandTuple {
+                binary_path: command.binary_path.clone(),
+                args: command
+                    .args
+                    .iter()
+                    .map(|c| {
+                        c.replace("{source}", source.to_str().unwrap())
+                            .replace("{output}", output.to_str().unwrap())
+                    })
+                    .collect(),
+            };
+
+            info!("Compiling: {:#?}", command);
+
             let stats = isolate::compile(
                 isolate_executable_path,
                 isolate_box,
                 CompileParams {
-                    memory_limit_mib: 1_024,
-                    time_limit_ms: 50_000,
+                    uuid,
+                    // 1GiB
+                    memory_limit_kib: 1_024 * 1_024,
+                    // 5 seconds
+                    time_limit_ms: 5_000,
                     command: &command,
                 },
             )?;
@@ -245,43 +280,40 @@ where
     }
 }
 
-pub struct ExecuteParams {
-    pub memory_limit_mib: i32,
+pub struct ExecuteParams<'a> {
+    pub language: &'a LanguageParams,
+    pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
+    pub stdin_path: &'a PathBuf,
+    pub uuid: &'a str,
 }
 
 pub fn run(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
-    language: &LanguageParams,
     execute_params: &ExecuteParams,
 ) -> Result<isolate::RunStats<File>, CommandError> {
-    match &language.run {
-        Run::RunExe => Ok(isolate::execute(
-            &isolate_executable_path,
-            &isolate_box,
-            &CommandTuple {
-                binary_path: "exe".into(),
-                args: vec![],
-            },
-            &isolate::ExecuteParams {
-                memory_limit_mib: execute_params.memory_limit_mib,
-                time_limit_ms: execute_params.time_limit_ms,
-                stdin: "./data/stdin".into(),
-            },
-        )?),
-        Run::Command(command) => {
-            let stats = isolate::execute(
-                &isolate_executable_path,
-                &isolate_box,
-                &command,
-                &isolate::ExecuteParams {
-                    memory_limit_mib: execute_params.memory_limit_mib,
-                    time_limit_ms: execute_params.time_limit_ms,
-                    stdin: "./data/stdin".into(),
-                },
-            )?;
-            Ok(stats)
-        }
+    lazy_static! {
+        static ref EXE_COMMAND_TUPLE: CommandTuple = CommandTuple {
+            binary_path: "exe".into(),
+            args: vec![],
+        };
     }
+
+    let command = match &execute_params.language.run {
+        Run::RunExe => &EXE_COMMAND_TUPLE,
+        Run::Command(command) => command,
+    };
+
+    Ok(isolate::execute(
+        &isolate_executable_path,
+        &isolate_box,
+        &command,
+        &isolate::ExecuteParams {
+            uuid: &execute_params.uuid,
+            memory_limit_kib: execute_params.memory_limit_kib,
+            time_limit_ms: execute_params.time_limit_ms,
+            stdin_path: execute_params.stdin_path,
+        },
+    )?)
 }

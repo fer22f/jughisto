@@ -2,6 +2,7 @@
 #[macro_use]
 extern crate diesel;
 
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -548,10 +549,17 @@ async fn create_submission(
         },
     )?;
 
+    let metadata =
+        problem::get_problem_by_contest_id_metadata(&connection, form.contest_problem_id)?;
+
     submission_state.channel.send(Submission {
         uuid,
         language: (&form.language).into(),
         source_text: (&form.source_text).into(),
+        time_limit_ms: metadata.time_limit_ms,
+        memory_limit_kib: metadata.memory_limit_bytes / 1_024,
+        test_count: metadata.test_count,
+        test_path: format!("./data/{}/tests/", metadata.id).into(),
     })?;
 
     session.set("language", &form.language)?;
@@ -620,6 +628,7 @@ async fn create_contest(
     identity: Identity,
     pool: web::Data<DbPool>,
     mut payload: Multipart,
+    languages: web::Data<Arc<HashMap<String, LanguageParams>>>,
 ) -> PostResult {
     let identity = get_identity(identity)?;
 
@@ -703,28 +712,40 @@ async fn create_contest(
 
     let mut zip = imported.2;
 
+    lazy_static! {
+        static ref CODEFORCES_LANGUAGE_TO_JUGHISTO: HashMap<String, String> = {
+            let mut m = HashMap::new();
+            m.insert("cpp.g++17".into(), "cpp.17.g++".into());
+            m.insert("java.8".into(), "java.8".into());
+            m.insert("testlib".into(), "cpp.17.g++".into());
+            m
+        };
+    }
+
     for (name, problem) in imported.1 {
         let problem_id_without_revision = polygon_url_to_id_without_revision(problem.url);
         let problem_id = format!("{}.r{}", problem_id_without_revision, &problem.revision);
 
-        let files_regex: Regex = Regex::new(
-            &format!(concat!(
+        let files_regex: Regex = Regex::new(&format!(
+            concat!(
                 "^{}/(",
-                    r"files/$|",
-                    r"files/.*\.cpp$|",
-                    r"files/.*\.h$|",
-                    r"files/tests/$|",
-                    r"files/tests/validator-tests/$|",
-                    r"files/tests/validator-tests/.*$|",
-                    r"files/tests/validator-tests/.*$|",
-                    r"solutions/$|",
-                    r"solutions/.*.cpp$|",
-                    r"statements/$|",
-                    r"statements/.html/.*$|",
-                    r"tests/.*$",
+                r"files/$|",
+                r"files/.*\.cpp$|",
+                r"files/.*\.h$|",
+                r"files/tests/$|",
+                r"files/tests/validator-tests/$|",
+                r"files/tests/validator-tests/.*$|",
+                r"files/tests/validator-tests/.*$|",
+                r"solutions/$|",
+                r"solutions/.*.cpp$|",
+                r"statements/$|",
+                r"statements/.html/.*$|",
+                r"tests/.*$",
                 ")"
-            ), name)
-        ).unwrap();
+            ),
+            name
+        ))
+        .unwrap();
         let mut filenames = zip
             .file_names()
             .filter(|name| files_regex.is_match(name))
@@ -747,13 +768,17 @@ async fn create_contest(
             }
 
             info!("Putting file {} into {}", name, data_path);
-            std::io::copy(
-                &mut zip.by_name(&name)?,
-                &mut File::create(data_path)?,
-            )?;
+            std::io::copy(&mut zip.by_name(&name)?, &mut File::create(data_path)?)?;
         }
 
-        problem::upsert_problem(
+        fn map_codeforces_language(input: &String) -> Result<String, PostError> {
+            Ok(CODEFORCES_LANGUAGE_TO_JUGHISTO
+                .get(input)
+                .ok_or_else(|| PostError::Validation(format!("Linguagem {} não suportada", input)))?
+                .into())
+        }
+
+        let problem = problem::upsert_problem(
             &connection,
             problem::NewProblem {
                 id: problem_id.clone(),
@@ -765,17 +790,88 @@ async fn create_contest(
                     .unwrap(),
                 time_limit_ms: problem.judging.testset[0].time_limit.value.parse().unwrap(),
                 checker_path: problem.assets.checker.source.path.clone(),
-                checker_language: problem.assets.checker.r#type.clone(),
+                checker_language: map_codeforces_language(&problem.assets.checker.r#type)?,
                 validator_path: problem.assets.validators.validator[0].source.path.clone(),
-                validator_language: problem.assets.validators.validator[0].source.r#type.clone(),
-                main_solution_path: problem.assets.solutions.solution[0].source.path.clone(),
-                main_solution_language: problem.assets.solutions.solution[0].source.r#type.clone(),
+                validator_language: map_codeforces_language(
+                    &problem.assets.validators.validator[0].source.r#type,
+                )?,
+                main_solution_path: problem
+                    .assets
+                    .solutions
+                    .solution
+                    .iter()
+                    .find(|s| s.tag == "main")
+                    .ok_or(PostError::Validation("No main solution".into()))?
+                    .source
+                    .path
+                    .clone(),
+                main_solution_language: map_codeforces_language(
+                    &problem
+                        .assets
+                        .solutions
+                        .solution
+                        .iter()
+                        .find(|s| s.tag == "main")
+                        .ok_or(PostError::Validation("No main solution".into()))?
+                        .source
+                        .r#type,
+                )?,
                 test_count: problem.judging.testset[0].test_count.value.parse().unwrap(),
-                status: "unpacked".into(),
+                status: "compiled".into(),
                 creation_instant: Local::now().naive_local(),
                 creation_user_id: identity.id,
             },
         )?;
+
+        let isolate_executable_path = setup::get_isolate_executable_path();
+        let isolate_box = isolate::create_box(&isolate_executable_path, 1)
+            .map_err(|_| PostError::Validation("Can't create isolate box".into()))?;
+
+        use std::path::PathBuf;
+
+        let uuid = "import-solution";
+        language::compile(
+            &isolate_executable_path,
+            &isolate_box,
+            languages.get(&problem.checker_language).unwrap(),
+            &uuid,
+            &PathBuf::from("/data-import-solution/")
+                .join(&problem.id)
+                .join(problem.checker_path),
+            &PathBuf::from("/data-import-solution/")
+                .join(&problem.id)
+                .join("checker"),
+        )
+        .map_err(|_| PostError::Validation("Couldn't compile checker".into()))?;
+
+        language::compile(
+            &isolate_executable_path,
+            &isolate_box,
+            languages.get(&problem.validator_language).unwrap(),
+            &uuid,
+            &PathBuf::from("/data-import-solution/")
+                .join(&problem.id)
+                .join(problem.validator_path),
+            &PathBuf::from("/data-import-solution/")
+                .join(&problem.id)
+                .join("validator"),
+        )
+        .map_err(|_| PostError::Validation("Couldn't compile checker".into()))?;
+
+        language::compile(
+            &isolate_executable_path,
+            &isolate_box,
+            languages.get(&problem.main_solution_language).unwrap(),
+            &uuid,
+            &PathBuf::from("/data-import-solution/")
+                .join(&problem.id)
+                .join(problem.main_solution_path),
+            &PathBuf::from("/data-import-solution/")
+                .join(&problem.id)
+                .join("main_solution"),
+        )
+        .map_err(|_| PostError::Validation("Couldn't compile checker".into()))?;
+
         contest::relate_problem(
             &connection,
             contest::NewContestProblems {

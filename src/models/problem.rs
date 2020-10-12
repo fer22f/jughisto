@@ -63,6 +63,44 @@ pub fn get_problems_by_contest_id(
         .load(connection)
 }
 
+#[derive(Queryable)]
+pub struct ProblemByContestMetadata {
+    pub id: String,
+    pub memory_limit_bytes: i32,
+    pub time_limit_ms: i32,
+    pub checker_path: String,
+    pub checker_language: String,
+    pub validator_path: String,
+    pub validator_language: String,
+    pub main_solution_path: String,
+    pub main_solution_language: String,
+    pub test_count: i32,
+    pub status: String,
+}
+
+pub fn get_problem_by_contest_id_metadata(
+    connection: &SqliteConnection,
+    contest_problem_id: i32,
+) -> QueryResult<ProblemByContestMetadata> {
+    problem::table
+        .inner_join(contest_problems::table)
+        .filter(contest_problems::id.eq(contest_problem_id))
+        .select((
+            problem::id,
+            problem::memory_limit_bytes,
+            problem::time_limit_ms,
+            problem::checker_path,
+            problem::checker_language,
+            problem::validator_path,
+            problem::validator_language,
+            problem::main_solution_path,
+            problem::main_solution_language,
+            problem::test_count,
+            problem::status,
+        ))
+        .first(connection)
+}
+
 pub fn upsert_problem(
     connection: &SqliteConnection,
     new_problem: NewProblem,
