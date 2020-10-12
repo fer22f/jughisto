@@ -32,7 +32,21 @@ pub struct IsolateBox {
     pub path: PathBuf,
 }
 
-pub fn create_box(isolate_executable_path: &PathBuf, id: i32) -> Result<IsolateBox, CommandError> {
+pub fn new_isolate_box(
+    isolate_executable_path: &PathBuf,
+    id: i32,
+) -> Result<IsolateBox, CommandError> {
+    let output = reset(isolate_executable_path, id)?;
+    Ok(IsolateBox {
+        id,
+        path: PathBuf::from(str::from_utf8(&output.stdout)?.trim_end()).join("box"),
+    })
+}
+
+pub fn reset(
+    isolate_executable_path: &PathBuf,
+    id: i32,
+) -> Result<std::process::Output, CommandError> {
     cleanup_box(isolate_executable_path, id)?;
 
     let output = Command::new(isolate_executable_path)
@@ -48,10 +62,7 @@ pub fn create_box(isolate_executable_path: &PathBuf, id: i32) -> Result<IsolateB
         ));
     }
 
-    Ok(IsolateBox {
-        id,
-        path: PathBuf::from(str::from_utf8(&output.stdout)?.trim_end()).join("box"),
-    })
+    Ok(output)
 }
 
 pub struct RunParams<'a> {
@@ -149,7 +160,7 @@ pub fn run(
             run_params.time_limit_ms % 1000
         ))
         .arg(format!(
-            "--mem={}",
+            "--cg-mem={}",
             /* input is in KiB */ run_params.memory_limit_kib
         ))
         .args(if let Some(stdin_path) = stdin_path {
@@ -259,16 +270,6 @@ pub fn run(
                 _ => {}
             }
         }
-    }
-
-    if stats.status == RunStatus::Signal
-        && stats.exit_signal == Some(6)
-        && match stats.memory_kib {
-            Some(memory_kib) => memory_kib >= run_params.memory_limit_kib,
-            _ => false,
-        }
-    {
-        stats.status = RunStatus::MemoryLimitExceeded;
     }
 
     Ok(stats)

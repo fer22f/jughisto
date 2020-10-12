@@ -824,7 +824,7 @@ async fn create_contest(
         )?;
 
         let isolate_executable_path = setup::get_isolate_executable_path();
-        let isolate_box = isolate::create_box(&isolate_executable_path, 1)
+        let isolate_box = isolate::new_isolate_box(&isolate_executable_path, 1)
             .map_err(|_| PostError::Validation("Can't create isolate box".into()))?;
 
         use std::path::PathBuf;

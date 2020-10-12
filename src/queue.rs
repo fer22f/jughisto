@@ -154,6 +154,8 @@ fn run_loop(
             error_output: Some(stderr),
         })
         .expect("Coudln't send back submission completion");
+
+    isolate::reset(isolate_executable_path, 0);
 }
 
 pub fn setup_workers(
@@ -167,7 +169,7 @@ pub fn setup_workers(
     thread::spawn({
         move || {
             let isolate_box =
-                isolate::create_box(&isolate_executable_path, 0).expect("Couldn't create box");
+                isolate::new_isolate_box(&isolate_executable_path, 0).expect("Couldn't create box");
             let receiver = receiver.clone();
             let submission_completion_sender = submission_completion_sender.clone();
             loop {

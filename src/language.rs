@@ -295,7 +295,7 @@ pub fn run(
 ) -> Result<isolate::RunStats<File>, CommandError> {
     lazy_static! {
         static ref EXE_COMMAND_TUPLE: CommandTuple = CommandTuple {
-            binary_path: "exe".into(),
+            binary_path: "program".into(),
             args: vec![],
         };
     }
