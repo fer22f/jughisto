@@ -165,7 +165,7 @@ enum PostError {
     #[error(transparent)]
     Web(#[from] actix_web::Error),
     #[error(transparent)]
-    Queue(#[from] crossbeam::SendError<queue::Submission>),
+    Queue(#[from] crossbeam::channel::SendError<queue::Submission>),
     #[error("couldn't fetch result from database")]
     Database(#[from] diesel::result::Error),
     #[error("couldn't work with the filesystem")]
