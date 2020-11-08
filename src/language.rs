@@ -198,7 +198,7 @@ pub fn compile_source<R>(
     language: &LanguageParams,
     uuid: &str,
     reader: &mut R,
-) -> Result<Option<isolate::RunStats<File>>, CommandError>
+) -> Result<Option<isolate::RunStats>, CommandError>
 where
     R: Read,
 {
@@ -245,7 +245,7 @@ pub fn compile(
     uuid: &str,
     source: &PathBuf,
     output: &PathBuf,
-) -> Result<Option<isolate::RunStats<File>>, CommandError> {
+) -> Result<Option<isolate::RunStats>, CommandError> {
     match &language.compile {
         Compile::Command(command) | Compile::TransformAndCommand(_, command) => {
             let command = CommandTuple {
@@ -270,7 +270,7 @@ pub fn compile(
                     // 1GiB
                     memory_limit_kib: 1_024 * 1_024,
                     // 5 seconds
-                    time_limit_ms: 5_000,
+                    time_limit_ms: 25_000,
                     command: &command,
                 },
             )?;
@@ -292,7 +292,7 @@ pub fn run(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     execute_params: &ExecuteParams,
-) -> Result<isolate::RunStats<File>, CommandError> {
+) -> Result<isolate::RunStats, CommandError> {
     lazy_static! {
         static ref EXE_COMMAND_TUPLE: CommandTuple = CommandTuple {
             binary_path: "program".into(),
@@ -313,7 +313,7 @@ pub fn run(
             uuid: &execute_params.uuid,
             memory_limit_kib: execute_params.memory_limit_kib,
             time_limit_ms: execute_params.time_limit_ms,
-            stdin_path: execute_params.stdin_path,
+            stdin_path: Some(execute_params.stdin_path),
         },
     )?)
 }

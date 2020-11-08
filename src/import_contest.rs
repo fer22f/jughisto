@@ -413,3 +413,18 @@ pub fn import_file<R: Read + Seek>(
 
     Ok((contest, problems, zip, report))
 }
+
+use regex::Captures;
+use std::path::PathBuf;
+
+pub fn format_width(pattern_path: &String, i: usize) -> PathBuf {
+    lazy_static! {
+        static ref WIDTH_REGEX: Regex = Regex::new(
+            r"%0(\d)+d"
+        ).unwrap();
+    }
+    PathBuf::from(String::from(
+        WIDTH_REGEX.replace(pattern_path, |caps: &Captures| {
+            return format!("{:0width$}", i, width = caps[1].parse().unwrap())
+        })))
+}

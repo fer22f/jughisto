@@ -13,10 +13,6 @@ pub struct CommandTuple {
 
 #[derive(Error, Debug)]
 pub enum CommandError {
-    #[error("couldn't open stdout")]
-    StdoutIo(#[source] io::Error),
-    #[error("couldn't open stdout")]
-    StderrIo(#[source] io::Error),
     #[error("couldn't get command output")]
     CommandIo(#[source] io::Error),
     #[error("couldn't copy file")]
@@ -86,10 +82,8 @@ pub enum RunStatus {
     FailedToStart,
 }
 
-use std::io::Read;
-
 #[derive(Debug)]
-pub struct RunStats<R: Read> {
+pub struct RunStats {
     pub time_ms: Option<i32>,
     pub time_wall_ms: Option<i32>,
     pub memory_kib: Option<i32>,
@@ -97,33 +91,31 @@ pub struct RunStats<R: Read> {
     pub message: Option<String>,
     pub exit_signal: Option<i32>,
     pub status: RunStatus,
-    pub stdout: R,
-    pub stderr: R,
+    pub stdout_path: PathBuf,
+    pub stderr_path: PathBuf,
 }
 
 pub struct ExecuteParams<'a> {
     pub uuid: &'a str,
     pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
-    pub stdin_path: &'a PathBuf,
+    pub stdin_path: Option<&'a PathBuf>,
 }
 
 use std::str::FromStr;
-
-use std::fs::File;
 
 pub fn execute(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     command: &CommandTuple,
     execute_params: &ExecuteParams,
-) -> Result<RunStats<File>, CommandError> {
+) -> Result<RunStats, CommandError> {
     run(
         isolate_executable_path,
         isolate_box,
         RunParams {
             uuid: execute_params.uuid,
-            stdin_path: Some(execute_params.stdin_path),
+            stdin_path: execute_params.stdin_path,
             restricted: true,
             memory_limit_kib: execute_params.memory_limit_kib,
             time_limit_ms: execute_params.time_limit_ms,
@@ -136,7 +128,7 @@ pub fn run(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     run_params: RunParams,
-) -> Result<RunStats<File>, CommandError> {
+) -> Result<RunStats, CommandError> {
     let in_data_dir = PathBuf::from(format!("/data-{}", run_params.uuid));
     let out_data_dir = PathBuf::from("./data").canonicalize().unwrap();
     let stdin_path = run_params
@@ -186,14 +178,18 @@ pub fn run(
         .arg("--dir=usr/include")
         .arg("--dir=usr/include")
         .arg("--dir=proc=proc:fs")
-        .arg(format!(
-            "--dir={}={}",
-            in_data_dir.to_str().unwrap(),
-            out_data_dir.to_str().unwrap()
-        ))
         .arg("--processes=40") // A reasonable amount of processes
+        .arg(
+            format!(
+                "--dir={}={}",
+                in_data_dir.to_str().unwrap(),
+                out_data_dir.to_str().unwrap()
+            )
+        )
         .args(if run_params.restricted {
-            vec!["--fsize=0"] // Don't write to the disk at all
+            vec![
+                "--fsize=0", // Don't write to the disk at all
+            ]
         } else {
             vec![]
         })
@@ -224,8 +220,8 @@ pub fn run(
         message: None,
         exit_signal: None,
         status: RunStatus::Ok,
-        stdout: File::open(stdout_path).map_err(CommandError::StdoutIo)?,
-        stderr: File::open(stderr_path).map_err(CommandError::StderrIo)?,
+        stdout_path,
+        stderr_path,
     };
 
     fn parse_ms(input: &str) -> Option<i32> {
@@ -286,7 +282,7 @@ pub fn compile(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     compile_params: CompileParams,
-) -> Result<RunStats<File>, CommandError> {
+) -> Result<RunStats, CommandError> {
     run(
         isolate_executable_path,
         isolate_box,

@@ -31,6 +31,7 @@ table! {
         main_solution_path -> Text,
         main_solution_language -> Text,
         test_count -> Integer,
+        test_pattern -> Text,
         status -> Text,
         creation_user_id -> Integer,
         creation_instant -> Timestamp,
@@ -73,4 +74,10 @@ joinable!(problem -> user (creation_user_id));
 joinable!(submission -> contest_problems (contest_problem_id));
 joinable!(submission -> user (user_id));
 
-allow_tables_to_appear_in_same_query!(contest, contest_problems, problem, submission, user,);
+allow_tables_to_appear_in_same_query!(
+    contest,
+    contest_problems,
+    problem,
+    submission,
+    user,
+);

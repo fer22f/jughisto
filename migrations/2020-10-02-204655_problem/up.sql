@@ -10,6 +10,7 @@ CREATE TABLE problem (
   main_solution_path text not null,
   main_solution_language text not null,
   test_count integer not null,
+  test_pattern text not null,
   status text not null,
   creation_user_id integer references user(id) not null,
   creation_instant timestamp not null

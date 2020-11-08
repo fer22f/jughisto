@@ -13,6 +13,7 @@ use actix_web::{dev, get, http, middleware, post, web, App, HttpServer};
 use diesel::SqliteConnection;
 use std::env;
 use std::fs::File;
+use std::fs;
 use std::io;
 use uuid::Uuid;
 
@@ -42,6 +43,7 @@ use std::thread;
 type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 use chrono_tz::Tz;
 use std::time::Duration;
+use isolate::RunStats;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
@@ -559,7 +561,8 @@ async fn create_submission(
         time_limit_ms: metadata.time_limit_ms,
         memory_limit_kib: metadata.memory_limit_bytes / 1_024,
         test_count: metadata.test_count,
-        test_path: format!("./data/{}/tests/", metadata.id).into(),
+        test_pattern: format!("./data/{}/{}", metadata.id, metadata.test_pattern).into(),
+        checker_binary_path: format!("./data/{}/checker", metadata.id).into(),
     })?;
 
     session.set("language", &form.language)?;
@@ -722,9 +725,9 @@ async fn create_contest(
         };
     }
 
-    for (name, problem) in imported.1 {
-        let problem_id_without_revision = polygon_url_to_id_without_revision(problem.url);
-        let problem_id = format!("{}.r{}", problem_id_without_revision, &problem.revision);
+    for (name, metadata) in imported.1 {
+        let problem_id_without_revision = polygon_url_to_id_without_revision(metadata.url);
+        let problem_id = format!("{}.r{}", problem_id_without_revision, &metadata.revision);
 
         let files_regex: Regex = Regex::new(&format!(
             concat!(
@@ -737,10 +740,11 @@ async fn create_contest(
                 r"files/tests/validator-tests/.*$|",
                 r"files/tests/validator-tests/.*$|",
                 r"solutions/$|",
+                r"solutions/.*.cc$|",
                 r"solutions/.*.cpp$|",
                 r"statements/$|",
                 r"statements/.html/.*$|",
-                r"tests/.*$",
+                r"tests/$",
                 ")"
             ),
             name
@@ -782,20 +786,20 @@ async fn create_contest(
             &connection,
             problem::NewProblem {
                 id: problem_id.clone(),
-                name: problem.names.name[0].value.clone(),
-                memory_limit_bytes: problem.judging.testset[0]
+                name: metadata.names.name[0].value.clone(),
+                memory_limit_bytes: metadata.judging.testset[0]
                     .memory_limit
                     .value
                     .parse()
                     .unwrap(),
-                time_limit_ms: problem.judging.testset[0].time_limit.value.parse().unwrap(),
-                checker_path: problem.assets.checker.source.path.clone(),
-                checker_language: map_codeforces_language(&problem.assets.checker.r#type)?,
-                validator_path: problem.assets.validators.validator[0].source.path.clone(),
+                time_limit_ms: metadata.judging.testset[0].time_limit.value.parse().unwrap(),
+                checker_path: metadata.assets.checker.source.path.clone(),
+                checker_language: map_codeforces_language(&metadata.assets.checker.r#type)?,
+                validator_path: metadata.assets.validators.validator[0].source.path.clone(),
                 validator_language: map_codeforces_language(
-                    &problem.assets.validators.validator[0].source.r#type,
+                    &metadata.assets.validators.validator[0].source.r#type,
                 )?,
-                main_solution_path: problem
+                main_solution_path: metadata
                     .assets
                     .solutions
                     .solution
@@ -806,7 +810,7 @@ async fn create_contest(
                     .path
                     .clone(),
                 main_solution_language: map_codeforces_language(
-                    &problem
+                    &metadata
                         .assets
                         .solutions
                         .solution
@@ -816,7 +820,8 @@ async fn create_contest(
                         .source
                         .r#type,
                 )?,
-                test_count: problem.judging.testset[0].test_count.value.parse().unwrap(),
+                test_pattern: metadata.judging.testset[0].input_path_pattern.value.clone(),
+                test_count: metadata.judging.testset[0].test_count.value.parse().unwrap(),
                 status: "compiled".into(),
                 creation_instant: Local::now().naive_local(),
                 creation_user_id: identity.id,
@@ -830,7 +835,7 @@ async fn create_contest(
         use std::path::PathBuf;
 
         let uuid = "import-solution";
-        language::compile(
+        let compile_stats = language::compile(
             &isolate_executable_path,
             &isolate_box,
             languages.get(&problem.checker_language).unwrap(),
@@ -838,13 +843,32 @@ async fn create_contest(
             &PathBuf::from("/data-import-solution/")
                 .join(&problem.id)
                 .join(problem.checker_path),
-            &PathBuf::from("/data-import-solution/")
-                .join(&problem.id)
-                .join("checker"),
+            &PathBuf::from("/box/program"),
         )
         .map_err(|_| PostError::Validation("Couldn't compile checker".into()))?;
+        if match compile_stats {
+            None => false,
+            Some(RunStats {
+                exit_code: Some(c), ..
+            }) => c != 0,
+            Some(RunStats {
+                exit_code: None, ..
+            }) => true,
+        } {
+            let stats = compile_stats.unwrap();
+            let mut stderr = String::new();
+            File::open(&stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
+            File::open(&stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
+            info!("Couldn't compile: {:#?}", stats);
+            info!("Stderr: {}", stderr);
+            return Err(PostError::Validation("Couldn't compile checker".into()));
+        }
+        fs::copy(
+            isolate_box.path.join("program"),
+            &PathBuf::from("./data").join(&problem.id).join("checker"),
+        )?;
 
-        language::compile(
+        let compile_stats = language::compile(
             &isolate_executable_path,
             &isolate_box,
             languages.get(&problem.validator_language).unwrap(),
@@ -852,13 +876,32 @@ async fn create_contest(
             &PathBuf::from("/data-import-solution/")
                 .join(&problem.id)
                 .join(problem.validator_path),
-            &PathBuf::from("/data-import-solution/")
-                .join(&problem.id)
-                .join("validator"),
+            &PathBuf::from("/box/program"),
         )
-        .map_err(|_| PostError::Validation("Couldn't compile checker".into()))?;
+        .map_err(|_| PostError::Validation("Couldn't compile validator".into()))?;
+        if match compile_stats {
+            None => false,
+            Some(RunStats {
+                exit_code: Some(c), ..
+            }) => c != 0,
+            Some(RunStats {
+                exit_code: None, ..
+            }) => true,
+        } {
+            let stats = compile_stats.unwrap();
+            let mut stderr = String::new();
+            File::open(&stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
+            File::open(&stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
+            info!("Couldn't compile: {:#?}", stats);
+            info!("Stderr: {}", stderr);
+            return Err(PostError::Validation("Couldn't compile validator".into()));
+        }
+        fs::copy(
+            isolate_box.path.join("program"),
+            &PathBuf::from("./data").join(&problem.id).join("validator"),
+        )?;
 
-        language::compile(
+        let compile_stats = language::compile(
             &isolate_executable_path,
             &isolate_box,
             languages.get(&problem.main_solution_language).unwrap(),
@@ -866,11 +909,150 @@ async fn create_contest(
             &PathBuf::from("/data-import-solution/")
                 .join(&problem.id)
                 .join(problem.main_solution_path),
-            &PathBuf::from("/data-import-solution/")
-                .join(&problem.id)
-                .join("main_solution"),
+            &PathBuf::from("/box/program"),
         )
-        .map_err(|_| PostError::Validation("Couldn't compile checker".into()))?;
+        .map_err(|_| PostError::Validation("Couldn't compile main solution".into()))?;
+        if match compile_stats {
+            None => false,
+            Some(RunStats {
+                exit_code: Some(c), ..
+            }) => c != 0,
+            Some(RunStats {
+                exit_code: None, ..
+            }) => true,
+        } {
+            let stats = compile_stats.unwrap();
+            let mut stderr = String::new();
+            File::open(&stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
+            File::open(&stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
+            info!("Couldn't compile: {:#?}", stats);
+            info!("Stderr: {}", stderr);
+            return Err(PostError::Validation("Couldn't compile main solution".into()));
+        }
+        fs::copy(
+            isolate_box.path.join("program"),
+            &PathBuf::from("./data").join(&problem.id).join("main_solution"),
+        )?;
+
+        for (i, test) in metadata.judging.testset[0].tests.test.iter().enumerate() {
+            let i = i + 1;
+            let test_path = PathBuf::from(format!("./data/{}", problem_id)).join(import_contest::format_width(&problem.test_pattern, i));
+
+            info!("Iterating through test {} to {:#?}, which is {}", i, test_path, test.method.as_ref().unwrap());
+            if test.method.as_ref().unwrap() == "manual" {
+                let test_name = PathBuf::from(&name).join(import_contest::format_width(&problem.test_pattern, i));
+                info!("Extracting {:#?} from zip", test_name);
+                std::io::copy(&mut zip.by_name(&test_name.to_str().unwrap())?, &mut File::create(&test_path)?)?;
+            } else {
+                let cmd: Vec<_> = test.cmd.as_ref().unwrap().split(" ").collect();
+                let binary_path = PathBuf::from(format!("./data/{}", problem_id)).join(cmd.get(0).unwrap());
+                if !binary_path.exists() {
+                    let compile_stats = language::compile(
+                        &isolate_executable_path,
+                        &isolate_box,
+                        languages.get("cpp.17.g++").unwrap(),
+                        &uuid,
+                        &PathBuf::from("/data-import-solution/")
+                            .join(&problem.id)
+                            .join("files")
+                            .join(cmd.get(0).unwrap()).with_extension("cpp"),
+                        &PathBuf::from("/box/program"),
+                        )
+                        .map_err(|e| {
+                            info!("{}", e);
+                            PostError::Validation("Couldn't compile an intermediate program".into())
+                         })?;
+                    if match compile_stats {
+                        None => false,
+                        Some(RunStats {
+                            exit_code: Some(c), ..
+                        }) => c != 0,
+                        Some(RunStats {
+                            exit_code: None, ..
+                        }) => true,
+                    } {
+                        let stats = compile_stats.unwrap();
+                        let mut stderr = String::new();
+                        File::open(&stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
+                        File::open(&stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
+                        info!("Couldn't compile: {:#?}", stats);
+                        info!("Stderr: {}", stderr);
+                        return Err(PostError::Validation("Couldn't compile an intermediate program".into()));
+                    }
+                    fs::copy(
+                        isolate_box.path.join("program"),
+                        &binary_path,
+                    )?;
+                }
+
+                let run_stats = isolate::execute(
+                    &isolate_executable_path,
+                    &isolate_box,
+                    &isolate::CommandTuple {
+                        binary_path: PathBuf::from("/data-import-solution/").join(binary_path.strip_prefix("./data").unwrap()),
+                        args: cmd[1..].iter().map(|s| s.clone().into()).collect(),
+                    },
+                    &isolate::ExecuteParams {
+                        uuid: &uuid,
+                        memory_limit_kib: problem.memory_limit_bytes/1_024,
+                        time_limit_ms: problem.time_limit_ms,
+                        stdin_path: None,
+                    }
+                ).map_err(|_| PostError::Validation("Couldn't use an intermediate program".into()))?;
+                if match run_stats {
+                    RunStats {
+                        exit_code: Some(c), ..
+                    } => c != 0,
+                    RunStats {
+                        exit_code: None, ..
+                    } => true,
+                } {
+                    let stats = run_stats;
+                    let mut stderr = String::new();
+                    File::open(&stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
+                    File::open(&stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
+                    info!("Couldn't compile: {:#?}", stats);
+                    info!("Stderr: {}", stderr);
+                    return Err(PostError::Validation("Couldn't use an intermediate program".into()));
+                }
+                fs::copy(
+                    isolate_box.path.join("stdout"),
+                    &test_path,
+                )?;
+            }
+
+            let run_stats = isolate::execute(
+                &isolate_executable_path,
+                &isolate_box,
+                &isolate::CommandTuple {
+                    binary_path: format!("/data-import-solution/{}/main_solution", problem_id).into(),
+                    args: vec![]
+                },
+                &isolate::ExecuteParams {
+                    uuid: &uuid,
+                    memory_limit_kib: problem.memory_limit_bytes/1_024,
+                    time_limit_ms: problem.time_limit_ms,
+                    stdin_path: Some(&test_path),
+                }
+            ).map_err(|_| PostError::Validation("Couldn't run solution on test".into()))?;
+            if match run_stats {
+                RunStats {
+                    exit_code: Some(c), ..
+                } => c != 0,
+                RunStats {
+                    exit_code: None, ..
+                } => true,
+            } {
+                let stats = run_stats;
+                let mut stderr = String::new();
+                File::open(&stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
+                File::open(&stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
+                info!("Couldn't compile: {:#?}", stats);
+                info!("Stderr: {}", stderr);
+                return Err(PostError::Validation("Couldn't run main solution on test".into()));
+            }
+            fs::copy(run_stats.stdout_path, test_path.with_extension("a"))?;
+        }
 
         contest::relate_problem(
             &connection,

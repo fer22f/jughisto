@@ -11,22 +11,27 @@ pub struct Submission {
     pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
     pub test_count: i32,
-    pub test_path: PathBuf,
+    pub test_pattern: String,
+    pub checker_binary_path: PathBuf,
 }
 
 use crate::isolate;
+use crate::import_contest;
 use crate::isolate::IsolateBox;
 use crate::isolate::RunStats;
 use crate::isolate::RunStatus;
 use crate::language::LanguageParams;
+use crate::isolate::CommandTuple;
 use crate::models::submission::SubmissionCompletion;
 use chrono::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Cursor;
-use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::io::Read;
+use std::fs;
+use std::convert::TryInto;
 
 fn run_loop(
     isolate_executable_path: &PathBuf,
@@ -60,18 +65,13 @@ fn run_loop(
             exit_code: None, ..
         }) => true,
     } {
+        let stats = compile_stats.unwrap();
+
         let judge_end_instant = Local::now().naive_local();
 
-        let mut last_stderr = String::new();
-
-        for stats in compile_stats {
-            let mut stderr_file = stats.stderr;
-            let mut stdout_file = stats.stdout;
-            let mut stderr = String::new();
-            stderr_file.read_to_string(&mut stderr).unwrap_or(0);
-            stdout_file.read_to_string(&mut stderr).unwrap_or(0);
-            last_stderr = stderr;
-        }
+        let mut stderr = String::new();
+        File::open(stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
+        File::open(stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
 
         submission_completion_sender
             .send(SubmissionCompletion {
@@ -82,30 +82,19 @@ fn run_loop(
                 memory_kib: None,
                 time_ms: None,
                 time_wall_ms: None,
-                error_output: Some(last_stderr),
+                error_output: Some(stderr),
             })
             .expect("Couldn't send back submission completion");
 
         return;
     }
 
-    fn count_digits(number: i32) -> usize {
-        let mut radix = 1;
-        let mut pw10 = 10;
-        while number >= pw10 {
-            radix += 1;
-            pw10 *= 10;
-        }
-        radix
-    }
+    let mut last_execute_stats: Option<RunStats> = None;
 
-    let mut last_execute_stats: Option<RunStats<File>> = None;
-
-    let width = count_digits(submission.test_count);
+    let mut stderr: Option<String> = None;
     for i in 1..submission.test_count + 1 {
-        let stdin_path = submission
-            .test_path
-            .join(format!("{:0width$}", i, width = width));
+        let stdin_path = import_contest::format_width(&submission.test_pattern, i.try_into().unwrap());
+        let answer_path = stdin_path.with_extension("a");
         info!(
             "Starting run {}/{} with test {:?}",
             i, submission.test_count, stdin_path
@@ -123,6 +112,57 @@ fn run_loop(
         )
         .expect("Crashed while running");
         info!("Run finished: {:#?}", execute_stats);
+
+        if match execute_stats {
+            RunStats {
+                exit_code: Some(c), ..
+            } => c != 0,
+            RunStats {
+                exit_code: None, ..
+            } => true,
+        } {
+            let mut dest = String::new();
+            File::open(&execute_stats.stderr_path).expect("No stderr").read_to_string(&mut dest).unwrap_or(0);
+            stderr = Some(dest);
+            last_execute_stats = Some(execute_stats);
+            break;
+        }
+
+        fs::copy(&execute_stats.stdout_path, isolate_box.path.join("stdin")).expect("Copy");
+
+        let checker_stats = isolate::execute(
+            &isolate_executable_path,
+            &isolate_box,
+            &CommandTuple {
+                binary_path: PathBuf::from(format!("/data-{}/", &submission.uuid.to_string())).join(submission.checker_binary_path.strip_prefix("./data").expect("Should work")),
+                args: vec![
+                    PathBuf::from(format!("/data-{}/", &submission.uuid.to_string())).join(stdin_path.strip_prefix("./data").expect("Should work")).to_str().expect("Should work").into(),
+                    PathBuf::from("/box/stdin").to_str().expect("Should work").into(),
+                    PathBuf::from(format!("/data-{}/", &submission.uuid.to_string())).join(answer_path.strip_prefix("./data").expect("Should work")).to_str().expect("Should work").into(),
+                ]
+            },
+            &isolate::ExecuteParams {
+                uuid: &submission.uuid.to_string(),
+                memory_limit_kib: submission.memory_limit_kib,
+                time_limit_ms: submission.time_limit_ms,
+                stdin_path: None
+            }
+        ).expect("Crashed while running");
+        if match checker_stats {
+            RunStats {
+                exit_code: Some(c), ..
+            } => c != 0,
+            RunStats {
+                exit_code: None, ..
+            } => true,
+        } {
+            let mut dest = String::new();
+            File::open(checker_stats.stderr_path).expect("No stderr").read_to_string(&mut dest).unwrap_or(0);
+            stderr = Some(dest);
+            last_execute_stats = Some(execute_stats);
+            break;
+        }
+
         last_execute_stats = Some(execute_stats);
     }
 
@@ -130,15 +170,12 @@ fn run_loop(
 
     let last_execute_stats = last_execute_stats.unwrap();
 
-    let mut stderr_file = &last_execute_stats.stderr;
-    let mut stderr = String::new();
-    stderr_file.read_to_string(&mut stderr).unwrap_or(0);
-
     submission_completion_sender
         .send(SubmissionCompletion {
             uuid: submission.uuid.to_string(),
             verdict: match last_execute_stats.status {
-                RunStatus::Ok => "AC",
+                RunStatus::Ok if stderr == None => "AC",
+                RunStatus::Ok => "WA",
                 RunStatus::TimeLimitExceeded => "TL",
                 RunStatus::RuntimeError => "RE",
                 RunStatus::Signal => "RE",
@@ -151,11 +188,11 @@ fn run_loop(
             memory_kib: last_execute_stats.memory_kib,
             time_ms: last_execute_stats.time_ms,
             time_wall_ms: last_execute_stats.time_wall_ms,
-            error_output: Some(stderr),
+            error_output: stderr,
         })
         .expect("Coudln't send back submission completion");
 
-    isolate::reset(isolate_executable_path, 0);
+    isolate::reset(isolate_executable_path, 0).expect("Reset failed");
 }
 
 pub fn setup_workers(

@@ -20,6 +20,7 @@ pub struct Problem {
     pub main_solution_path: String,
     pub main_solution_language: String,
     pub test_count: i32,
+    pub test_pattern: String,
     pub status: String,
     pub creation_user_id: i32,
     pub creation_instant: NaiveDateTime,
@@ -39,6 +40,7 @@ pub struct NewProblem {
     pub main_solution_path: String,
     pub main_solution_language: String,
     pub test_count: i32,
+    pub test_pattern: String,
     pub status: String,
     pub creation_user_id: i32,
     pub creation_instant: NaiveDateTime,
@@ -75,6 +77,7 @@ pub struct ProblemByContestMetadata {
     pub main_solution_path: String,
     pub main_solution_language: String,
     pub test_count: i32,
+    pub test_pattern: String,
     pub status: String,
 }
 
@@ -96,6 +99,7 @@ pub fn get_problem_by_contest_id_metadata(
             problem::main_solution_path,
             problem::main_solution_language,
             problem::test_count,
+            problem::test_pattern,
             problem::status,
         ))
         .first(connection)
