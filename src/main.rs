@@ -1045,6 +1045,7 @@ async fn create_contest(
                         memory_limit_kib: problem.memory_limit_bytes / 1_024,
                         time_limit_ms: problem.time_limit_ms,
                         stdin_path: None,
+                        process_limit: 1,
                     },
                 )
                 .map_err(|_| {
@@ -1090,6 +1091,7 @@ async fn create_contest(
                     memory_limit_kib: problem.memory_limit_bytes / 1_024,
                     time_limit_ms: problem.time_limit_ms,
                     stdin_path: Some(&test_path),
+                    process_limit: 1,
                 },
             )
             .map_err(|_| PostError::Validation("Couldn't run solution on test".into()))?;

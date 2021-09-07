@@ -30,6 +30,7 @@ pub struct LanguageParams {
     suffix: String,
     compile: Compile,
     run: Run,
+    process_limit: i32,
 }
 
 use lazy_static::lazy_static;
@@ -52,7 +53,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
             .unwrap();
         let stdout = str::from_utf8(&output.stdout).unwrap();
         lazy_static! {
-            static ref VERSION_REGEX: Regex = Regex::new(r"(?m)\d+\.\d+\.\d+$").unwrap();
+            static ref VERSION_REGEX: Regex = Regex::new(r"(?m)\d+\.\d+\.\d+").unwrap();
         }
         let version = VERSION_REGEX.find(stdout).unwrap().as_str();
 
@@ -86,6 +87,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                 ],
             }),
             run: Run::RunExe,
+            process_limit: 1,
         }
     }
 
@@ -128,6 +130,7 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                 ],
             }),
             run: Run::RunExe,
+            process_limit: 1,
         },
     );
     languages.insert(
@@ -169,9 +172,10 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
                     "-Duser.language=en".into(),
                     "-Duser.region=US".into(),
                     "-Duser.variant=US".into(),
-                    "{program}".into(),
+                    "program".into(),
                 ],
             }),
+            process_limit: 19,
         },
     );
     languages.insert(
@@ -183,8 +187,9 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
             compile: Compile::NoCompile,
             run: Run::Command(CommandTuple {
                 binary_path: "/usr/bin/python3".into(),
-                args: vec!["{program}".into()],
+                args: vec!["{source}".into()],
             }),
+            process_limit: 1,
         },
     );
     Arc::new(languages)
@@ -192,22 +197,26 @@ pub fn get_supported_languages() -> Arc<HashMap<String, LanguageParams>> {
 
 use std::io::Write;
 
+pub struct CompileSourceResult {
+    pub source_path: PathBuf,
+    pub program_path: PathBuf,
+    pub compile_stats: Option<isolate::RunStats>,
+}
+
 pub fn compile_source<R>(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     language: &LanguageParams,
     uuid: &str,
     reader: &mut R,
-) -> Result<Option<isolate::RunStats>, CommandError>
+) -> Result<CompileSourceResult, CommandError>
 where
     R: Read,
 {
-    if let Compile::NoCompile = language.compile {
-        return Ok(None);
-    }
-
     let program_name = "program";
     let source_name = format!("{}{}", program_name, language.suffix);
+    let source_path = PathBuf::from("/box/").join(&source_name);
+    let program_path = PathBuf::from("/box/").join(&program_name);
 
     let mut source_file =
         File::create(isolate_box.path.join(&source_name)).map_err(CommandError::CopyIo)?;
@@ -226,14 +235,26 @@ where
 
     source_file.sync_data().map_err(CommandError::CopyIo)?;
 
-    compile(
-        isolate_executable_path,
-        isolate_box,
-        language,
-        uuid,
-        &PathBuf::from("/box/").join(&source_name),
-        &PathBuf::from("/box/").join(&program_name),
-    )
+    if let Compile::NoCompile = language.compile {
+        return Ok(CompileSourceResult {
+            source_path,
+            program_path,
+            compile_stats: None,
+        });
+    }
+
+    Ok(CompileSourceResult {
+        source_path: (&source_path).into(),
+        program_path: (&program_path).into(),
+        compile_stats: compile(
+            isolate_executable_path,
+            isolate_box,
+            language,
+            uuid,
+            &source_path,
+            &program_path,
+        )?,
+    })
 }
 
 use log::info;
@@ -292,17 +313,25 @@ pub fn run(
     isolate_executable_path: &PathBuf,
     isolate_box: &IsolateBox,
     execute_params: &ExecuteParams,
+    source: &PathBuf,
+    output: &PathBuf,
 ) -> Result<isolate::RunStats, CommandError> {
-    lazy_static! {
-        static ref EXE_COMMAND_TUPLE: CommandTuple = CommandTuple {
+    let command = match &execute_params.language.run {
+        Run::RunExe => CommandTuple {
             binary_path: "program".into(),
             args: vec![],
-        };
-    }
-
-    let command = match &execute_params.language.run {
-        Run::RunExe => &EXE_COMMAND_TUPLE,
-        Run::Command(command) => command,
+        },
+        Run::Command(command) => CommandTuple {
+            binary_path: command.binary_path.clone(),
+            args: command
+                .args
+                .iter()
+                .map(|c| {
+                    c.replace("{source}", source.to_str().unwrap())
+                        .replace("{output}", output.to_str().unwrap())
+                })
+                .collect(),
+        },
     };
 
     Ok(isolate::execute(
@@ -314,6 +343,7 @@ pub fn run(
             memory_limit_kib: execute_params.memory_limit_kib,
             time_limit_ms: execute_params.time_limit_ms,
             stdin_path: Some(execute_params.stdin_path),
+            process_limit: execute_params.language.process_limit,
         },
     )?)
 }

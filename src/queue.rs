@@ -15,23 +15,23 @@ pub struct Submission {
     pub checker_binary_path: PathBuf,
 }
 
-use crate::isolate;
 use crate::import_contest;
+use crate::isolate;
+use crate::isolate::CommandTuple;
 use crate::isolate::IsolateBox;
 use crate::isolate::RunStats;
 use crate::isolate::RunStatus;
 use crate::language::LanguageParams;
-use crate::isolate::CommandTuple;
 use crate::models::submission::SubmissionCompletion;
 use chrono::prelude::*;
 use std::collections::HashMap;
+use std::convert::TryInto;
+use std::fs;
 use std::fs::File;
 use std::io::Cursor;
+use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::io::Read;
-use std::fs;
-use std::convert::TryInto;
 
 fn run_loop(
     isolate_executable_path: &PathBuf,
@@ -46,7 +46,7 @@ fn run_loop(
 
     info!("Starting to compile");
     let language = languages.get(&submission.language).unwrap();
-    let compile_stats = language::compile_source(
+    let compile_source_result = language::compile_source(
         &isolate_executable_path,
         &isolate_box,
         &language,
@@ -54,6 +54,7 @@ fn run_loop(
         &mut Cursor::new(submission.source_text),
     )
     .expect("Crashed while compiling");
+    let compile_stats = compile_source_result.compile_stats;
     info!("Compile finished: {:#?}", compile_stats);
 
     if match compile_stats {
@@ -70,8 +71,14 @@ fn run_loop(
         let judge_end_instant = Local::now().naive_local();
 
         let mut stderr = String::new();
-        File::open(stats.stderr_path).expect("Stderr should exist").read_to_string(&mut stderr).unwrap_or(0);
-        File::open(stats.stdout_path).expect("Stdout should exist").read_to_string(&mut stderr).unwrap_or(0);
+        File::open(stats.stderr_path)
+            .expect("Stderr should exist")
+            .read_to_string(&mut stderr)
+            .unwrap_or(0);
+        File::open(stats.stdout_path)
+            .expect("Stdout should exist")
+            .read_to_string(&mut stderr)
+            .unwrap_or(0);
 
         submission_completion_sender
             .send(SubmissionCompletion {
@@ -93,7 +100,8 @@ fn run_loop(
 
     let mut stderr: Option<String> = None;
     for i in 1..submission.test_count + 1 {
-        let stdin_path = import_contest::format_width(&submission.test_pattern, i.try_into().unwrap());
+        let stdin_path =
+            import_contest::format_width(&submission.test_pattern, i.try_into().unwrap());
         let answer_path = stdin_path.with_extension("a");
         info!(
             "Starting run {}/{} with test {:?}",
@@ -109,6 +117,8 @@ fn run_loop(
                 time_limit_ms: submission.time_limit_ms,
                 stdin_path: &stdin_path,
             },
+            &compile_source_result.source_path,
+            &compile_source_result.program_path,
         )
         .expect("Crashed while running");
         info!("Run finished: {:#?}", execute_stats);
@@ -122,7 +132,10 @@ fn run_loop(
             } => true,
         } {
             let mut dest = String::new();
-            File::open(&execute_stats.stderr_path).expect("No stderr").read_to_string(&mut dest).unwrap_or(0);
+            File::open(&execute_stats.stderr_path)
+                .expect("No stderr")
+                .read_to_string(&mut dest)
+                .unwrap_or(0);
             stderr = Some(dest);
             last_execute_stats = Some(execute_stats);
             break;
@@ -134,20 +147,39 @@ fn run_loop(
             &isolate_executable_path,
             &isolate_box,
             &CommandTuple {
-                binary_path: PathBuf::from(format!("/data-{}/", &submission.uuid.to_string())).join(submission.checker_binary_path.strip_prefix("./data").expect("Should work")),
+                binary_path: PathBuf::from(format!("/data-{}/", &submission.uuid.to_string()))
+                    .join(
+                        submission
+                            .checker_binary_path
+                            .strip_prefix("./data")
+                            .expect("Should work"),
+                    ),
                 args: vec![
-                    PathBuf::from(format!("/data-{}/", &submission.uuid.to_string())).join(stdin_path.strip_prefix("./data").expect("Should work")).to_str().expect("Should work").into(),
-                    PathBuf::from("/box/stdin").to_str().expect("Should work").into(),
-                    PathBuf::from(format!("/data-{}/", &submission.uuid.to_string())).join(answer_path.strip_prefix("./data").expect("Should work")).to_str().expect("Should work").into(),
-                ]
+                    PathBuf::from(format!("/data-{}/", &submission.uuid.to_string()))
+                        .join(stdin_path.strip_prefix("./data").expect("Should work"))
+                        .to_str()
+                        .expect("Should work")
+                        .into(),
+                    PathBuf::from("/box/stdin")
+                        .to_str()
+                        .expect("Should work")
+                        .into(),
+                    PathBuf::from(format!("/data-{}/", &submission.uuid.to_string()))
+                        .join(answer_path.strip_prefix("./data").expect("Should work"))
+                        .to_str()
+                        .expect("Should work")
+                        .into(),
+                ],
             },
             &isolate::ExecuteParams {
                 uuid: &submission.uuid.to_string(),
                 memory_limit_kib: submission.memory_limit_kib,
                 time_limit_ms: submission.time_limit_ms,
-                stdin_path: None
-            }
-        ).expect("Crashed while running");
+                stdin_path: None,
+                process_limit: 1,
+            },
+        )
+        .expect("Crashed while running");
         if match checker_stats {
             RunStats {
                 exit_code: Some(c), ..
@@ -157,7 +189,10 @@ fn run_loop(
             } => true,
         } {
             let mut dest = String::new();
-            File::open(checker_stats.stderr_path).expect("No stderr").read_to_string(&mut dest).unwrap_or(0);
+            File::open(checker_stats.stderr_path)
+                .expect("No stderr")
+                .read_to_string(&mut dest)
+                .unwrap_or(0);
             stderr = Some(dest);
             last_execute_stats = Some(execute_stats);
             break;

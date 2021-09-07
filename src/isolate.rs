@@ -67,6 +67,7 @@ pub struct RunParams<'a> {
     pub stdin_path: Option<&'a PathBuf>,
     pub uuid: &'a str,
     pub restricted: bool,
+    pub process_limit: i32,
     pub command: &'a CommandTuple,
 }
 
@@ -100,6 +101,7 @@ pub struct ExecuteParams<'a> {
     pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
     pub stdin_path: Option<&'a PathBuf>,
+    pub process_limit: i32,
 }
 
 use std::str::FromStr;
@@ -117,6 +119,7 @@ pub fn execute(
             uuid: execute_params.uuid,
             stdin_path: execute_params.stdin_path,
             restricted: true,
+            process_limit: execute_params.process_limit,
             memory_limit_kib: execute_params.memory_limit_kib,
             time_limit_ms: execute_params.time_limit_ms,
             command,
@@ -169,23 +172,35 @@ pub fn run(
             "--dir=box={}:rw",
             isolate_box.path.to_str().unwrap()
         ))
-        .arg("--dir=bin")
-        .arg("--dir=lib")
-        .arg("--dir=lib64:maybe")
-        .arg("--dir=usr/lib")
-        .arg("--dir=usr/libexec")
-        .arg("--dir=usr/bin")
-        .arg("--dir=usr/include")
-        .arg("--dir=usr/include")
-        .arg("--dir=proc=proc:fs")
-        .arg("--processes=40") // A reasonable amount of processes
-        .arg(
-            format!(
-                "--dir={}={}",
-                in_data_dir.to_str().unwrap(),
-                out_data_dir.to_str().unwrap()
-            )
-        )
+        .args(if run_params.restricted {
+            vec![
+                // python, java needs it
+                "--dir=lib",
+                "--dir=lib64:maybe",
+                // java: /usr/bin/java and python: /usr/bin/python3
+                "--dir=usr/lib",
+                "--dir=usr/bin",
+                // java: libjli.so
+                "--dir=proc=proc:fs",
+            ]
+        } else {
+            vec![
+                "--dir=bin",
+                "--dir=lib",
+                "--dir=lib64:maybe",
+                "--dir=usr/lib",
+                "--dir=usr/libexec",
+                "--dir=usr/bin",
+                "--dir=usr/include",
+                "--dir=proc=proc:fs",
+            ]
+        })
+        .arg(format!("--processes={}", run_params.process_limit))
+        .arg(format!(
+            "--dir={}={}",
+            in_data_dir.to_str().unwrap(),
+            out_data_dir.to_str().unwrap()
+        ))
         .args(if run_params.restricted {
             vec![
                 "--fsize=0", // Don't write to the disk at all
@@ -290,6 +305,7 @@ pub fn compile(
             uuid: compile_params.uuid,
             stdin_path: None,
             restricted: false,
+            process_limit: 40,
             memory_limit_kib: compile_params.memory_limit_kib,
             time_limit_ms: compile_params.time_limit_ms,
             command: compile_params.command,
