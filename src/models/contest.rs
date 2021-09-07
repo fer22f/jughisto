@@ -15,8 +15,8 @@ pub struct Contest {
     pub creation_instant: NaiveDateTime,
 }
 
-#[table_name = "contest"]
 #[derive(Insertable)]
+#[table_name = "contest"]
 pub struct NewContest {
     pub name: String,
     pub start_instant: Option<NaiveDateTime>,
@@ -39,8 +39,8 @@ pub fn get_contests(connection: &SqliteConnection) -> QueryResult<Vec<Contest>> 
     contest::table.load(connection)
 }
 
-#[table_name = "contest_problems"]
 #[derive(Insertable)]
+#[table_name = "contest_problems"]
 pub struct NewContestProblems {
     pub label: String,
     pub contest_id: i32,

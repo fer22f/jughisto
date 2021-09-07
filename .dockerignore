@@ -1,5 +1,4 @@
 target/
 data/
-db.sqlite
 isolate/*.o
 isolate/isolate

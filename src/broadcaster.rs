@@ -76,10 +76,11 @@ pub struct Client(Receiver<Bytes>);
 impl Stream for Client {
     type Item = Result<Bytes, Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.0).try_recv() {
-            Ok(v) => Poll::Ready(Some(Ok(v))),
-            Err(_) => Poll::Pending,
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.0.poll_recv(cx) {
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Ready(Some(v)) => Poll::Ready(Some(Ok(v))),
+            Poll::Pending => Poll::Pending,
         }
     }
 }

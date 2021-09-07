@@ -1,39 +1,39 @@
 [package]
 name = "jughisto"
 version = "0.1.0"
-authors = ["fer22f <3057302+fer22f@users.noreply.github.com>"]
+authors = ["Fernando K. <fer22f@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-web = "3.2.0"
-actix-identity = "0.3"
-r2d2 = "0.8"
-actix-http = "2.1.0"
-handlebars = { version = "3.5.1", features = ["dir_source"] }
-diesel = { version = "1.4.5", features = ["sqlite", "r2d2", "chrono"] }
-serde = { version = "1.0.117", features = ["derive"] }
-uuid = { version = "0.8", features = ["v4"] }
+actix-web = "3.3.2"
+actix-identity = "0.3.1"
+r2d2 = "0.8.9"
+actix-http = "2.2.1"
+handlebars = { version = "4.1.2", features = ["dir_source"] }
+diesel = { version = "1.4.7", features = ["sqlite", "r2d2", "chrono"] }
+serde = { version = "1.0.130", features = ["derive"] }
+uuid = { version = "0.8.2", features = ["v4"] }
 dotenv = "0.15.0"
-rust-argon2 = "0.8"
-zip = "0.5"
-thiserror = "1.0.22"
-quick-xml = { version = "0.20.0", features = ["serialize"] }
-libsqlite3-sys = { version = "*", features = ["bundled"] }
-regex = "1.4.2"
-which = "4.0.2"
-serde_json = "1.0.59"
-chrono = "0.4"
-crossbeam = "0.8.0"
-actix-files = "0.4.0"
+rust-argon2 = "0.8.3"
+zip = "0.5.13"
+thiserror = "1.0.29"
+quick-xml = { version = "0.22.0", features = ["serialize"] }
+libsqlite3-sys = { version = "0.22.2", features = ["bundled"] }
+regex = "1.5.4"
+which = "4.2.2"
+serde_json = "1.0.67"
+chrono = "0.4.19"
+crossbeam = "0.8.1"
+actix-files = "0.5.0"
 actix-flash = "0.2.0"
-env_logger = "0.8.1"
-futures = "0.3.7"
+env_logger = "0.9.0"
+futures = "0.3.17"
 actix-multipart = "0.3.0"
-listenfd = "0.3"
-actix-session = "0.4"
-tokio = { version = "0.3.3", features = ["sync"] }
-log = "0.4.11"
+listenfd = "0.3.5"
+actix-session = "0.4.1"
+tokio = { version = "1.11.0", features = ["sync"] }
+log = "0.4.14"
 lazy_static = "1.4.0"
 chrono-tz = "0.5.3"

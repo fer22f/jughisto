@@ -20,8 +20,8 @@ pub struct Submission {
     pub user_id: i32,
 }
 
-#[table_name = "submission"]
 #[derive(Insertable)]
+#[table_name = "submission"]
 pub struct NewSubmission {
     pub uuid: String,
     pub source_text: String,
