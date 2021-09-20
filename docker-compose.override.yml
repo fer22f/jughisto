@@ -1,14 +1,23 @@
 version: "3.1"
 
 services:
-  app:
-    ports:
-      - "8000:8000"
+  jughisto:
     build:
       context: .
       dockerfile: dev.Dockerfile
+    ports:
+      - "8000:8000"
+      - "50051:50051"
     env_file:
       - .env
+    volumes:
+      - ".:/usr/src/jughisto"
+      - "cargo_registry:/usr/local/cargo/registry"
+      - "cargo_git:/usr/local/cargo/git"
+  alvokanto:
+    build:
+      context: .
+      dockerfile: alvokanto/dev.Dockerfile
     volumes:
       - ".:/usr/src/jughisto"
       - "cargo_registry:/usr/local/cargo/registry"

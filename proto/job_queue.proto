@@ -1,0 +1,93 @@
+syntax = "proto3";
+package job_protocol;
+
+service JobQueue {
+    rpc GetJob (GetJobRequest) returns (Job);
+    rpc SubmitJobResult (JobResult) returns (JobResultConfirmation);
+};
+
+message Language {
+    string key = 1;
+    string name = 2;
+    int32 order = 3;
+};
+
+message GetJobRequest {
+    repeated Language supported_languages = 1;
+};
+
+message Job {
+    string uuid = 1;
+    string language = 2;
+    int32 memory_limit_kib = 3;
+    int32 time_limit_ms = 4;
+    message Judgement {
+        string source_text = 1;
+        int32 test_count = 2;
+        string test_pattern = 3;
+        string checker_language = 4;
+        string checker_source_path = 5;
+    };
+    message RunCached {
+        string source_path = 1;
+        repeated string arguments = 3;
+        optional string stdin_path = 4;
+        optional string stdout_path = 5;
+    };
+    oneof which {
+        Judgement judgement = 5;
+        RunCached run_cached = 6;
+    };
+};
+
+message JobResult {
+    string uuid = 1;
+    enum Code {
+        Ok = 0;
+        FailedToExecute = 1;
+        InvalidLanguage = 2;
+    };
+    Code code = 2;
+    message Judgement {
+        enum Verdict {
+            Accepted = 0;
+            WrongAnswer = 1;
+            CompilationError = 2;
+            TimeLimitExceeded = 3;
+            MemoryLimitExceeded = 4;
+            RuntimeError = 5;
+        };
+        Verdict verdict = 1;
+        int32 failed_test = 2;
+        int32 time_ms = 3;
+        int32 time_wall_ms = 4;
+        int32 memory_kib = 5;
+        int32 exit_code = 6;
+        optional int32 exit_signal = 7;
+        string error_output = 8;
+        string judge_start_instant = 9;
+        string judge_end_instant = 10;
+    };
+    message RunCached {
+        enum Result {
+            Ok = 0;
+            CompilationError = 1;
+            TimeLimitExceeded = 2;
+            MemoryLimitExceeded = 3;
+            RuntimeError = 4;
+        };
+        Result result = 1;
+        int32 time_ms = 2;
+        int32 time_wall_ms = 3;
+        int32 memory_kib = 4;
+        int32 exit_code = 5;
+        optional int32 exit_signal = 6;
+        string error_output = 7;
+    };
+    oneof which {
+        Judgement judgement = 3;
+        RunCached run_cached = 4;
+    };
+};
+
+message JobResultConfirmation {}

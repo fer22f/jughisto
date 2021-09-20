@@ -1,7 +1,6 @@
 use chrono::prelude::*;
 use dotenv::dotenv;
 use log::info;
-use which::which;
 
 use crate::models::user;
 use crate::models::user::NewUser;
@@ -41,10 +40,4 @@ pub fn setup_admin(connection: &SqliteConnection) {
             info!("Admin already created and is not using the default password.",)
         }
     }
-}
-
-use std::path::PathBuf;
-
-pub fn get_isolate_executable_path() -> PathBuf {
-    which("isolate").expect("isolate binary not installed")
 }

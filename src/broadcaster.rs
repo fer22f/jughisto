@@ -1,25 +1,24 @@
 use actix_web::rt::time::{interval_at, Instant};
 use actix_web::web::{Bytes, Data};
 use actix_web::Error;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::broadcast;
+use crate::queue::job_protocol::{JobResult, job_result};
 
 pub struct Broadcaster {
     clients: Vec<Sender<Bytes>>,
 }
 
 impl Broadcaster {
-    pub fn create() -> Data<Mutex<Self>> {
-        // Data ≃ Arc
+    pub fn create(job_result_receiver: broadcast::Receiver<JobResult>) -> Data<Mutex<Self>> {
         let me = Data::new(Mutex::new(Broadcaster::new()));
-
-        // ping clients every 10 seconds to see if they are alive
         Broadcaster::spawn_ping(me.clone());
-
+        Broadcaster::spawn_receiver(me.clone(), job_result_receiver);
         me
     }
 
@@ -29,13 +28,28 @@ impl Broadcaster {
         }
     }
 
+    fn spawn_receiver(me: Data<Mutex<Self>>, mut job_result_receiver: broadcast::Receiver<JobResult>) {
+        actix_web::rt::spawn(async move {
+            loop {
+                let job_result = job_result_receiver.recv().await.unwrap();
+                if let JobResult {
+                    which: Some(job_result::Which::Judgement(_judgement)),
+                    ..
+                } = job_result {
+                    me.lock().unwrap().send("update_submission", "");
+                }
+            }
+        });
+    }
+
     fn spawn_ping(me: Data<Mutex<Self>>) {
         actix_web::rt::spawn(async move {
             let mut task = interval_at(Instant::now(), Duration::from_secs(3));
-            while task.next().await.is_some() {
+            loop {
+                task.tick().await;
                 me.lock().unwrap().remove_stale_clients();
             }
-        })
+        });
     }
 
     fn remove_stale_clients(&mut self) {

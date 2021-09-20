@@ -1,0 +1,24 @@
+[package]
+name = "alvokanto"
+version = "0.1.0"
+authors = ["Fernando K. <fer22f@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tonic = "0.5.2"
+prost = "0.8"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+jughisto = { path = ".." }
+which = "4.2.2"
+log = "0.4.14"
+thiserror = "1.0.29"
+lazy_static = "1.4.0"
+regex = "1.5.4"
+env_logger = "0.9.0"
+fs_extra = "1.2.0"
+chrono = "0.4.19"
+
+[build-dependencies]
+tonic-build = "0.5.2"

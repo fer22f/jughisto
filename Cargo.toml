@@ -4,13 +4,18 @@ version = "0.1.0"
 authors = ["Fernando K. <fer22f@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "jughisto"
+path = "src/lib.rs"
 
 [dependencies]
-actix-web = "3.3.2"
-actix-identity = "0.3.1"
+actix-web = "4.0.0-beta.6"
+actix-identity = "0.4.0-beta.2"
+actix-http = "3.0.0-beta.1.0"
+actix-files = "0.6.0-beta.7"
+actix-multipart = "0.4.0-beta.6"
+actix-session = "0.5.0-beta.2"
 r2d2 = "0.8.9"
-actix-http = "2.2.1"
 handlebars = { version = "4.1.2", features = ["dir_source"] }
 diesel = { version = "1.4.7", features = ["sqlite", "r2d2", "chrono"] }
 serde = { version = "1.0.130", features = ["derive"] }
@@ -25,15 +30,17 @@ regex = "1.5.4"
 which = "4.2.2"
 serde_json = "1.0.67"
 chrono = "0.4.19"
-crossbeam = "0.8.1"
-actix-files = "0.5.0"
-actix-flash = "0.2.0"
 env_logger = "0.9.0"
 futures = "0.3.17"
-actix-multipart = "0.3.0"
 listenfd = "0.3.5"
-actix-session = "0.4.1"
-tokio = { version = "1.11.0", features = ["sync"] }
+tokio = { version = "1.11.0", features = ["sync", "macros", "rt-multi-thread"] }
 log = "0.4.14"
 lazy_static = "1.4.0"
 chrono-tz = "0.5.3"
+tonic = "0.5.2"
+prost = "0.8"
+async-channel = "1.6.1"
+dashmap = "3.11.10"
+
+[build-dependencies]
+tonic-build = "0.5.2"

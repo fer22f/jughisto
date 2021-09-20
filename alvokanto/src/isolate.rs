@@ -5,7 +5,7 @@ use std::process::Command;
 use std::str;
 use thiserror::Error;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct CommandTuple {
     pub binary_path: PathBuf,
     pub args: Vec<String>,
@@ -64,7 +64,7 @@ pub fn reset(
 pub struct RunParams<'a> {
     pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
-    pub stdin_path: Option<&'a PathBuf>,
+    pub stdin_path: Option<String>,
     pub uuid: &'a str,
     pub restricted: bool,
     pub process_limit: i32,
@@ -79,8 +79,6 @@ pub enum RunStatus {
     TimeLimitExceeded,
     MemoryLimitExceeded,
     RuntimeError,
-    Signal,
-    FailedToStart,
 }
 
 #[derive(Debug)]
@@ -100,7 +98,7 @@ pub struct ExecuteParams<'a> {
     pub uuid: &'a str,
     pub memory_limit_kib: i32,
     pub time_limit_ms: i32,
-    pub stdin_path: Option<&'a PathBuf>,
+    pub stdin_path: Option<String>,
     pub process_limit: i32,
 }
 
@@ -117,7 +115,7 @@ pub fn execute(
         isolate_box,
         RunParams {
             uuid: execute_params.uuid,
-            stdin_path: execute_params.stdin_path,
+            stdin_path: execute_params.stdin_path.clone(),
             restricted: true,
             process_limit: execute_params.process_limit,
             memory_limit_kib: execute_params.memory_limit_kib,
@@ -132,11 +130,11 @@ pub fn run(
     isolate_box: &IsolateBox,
     run_params: RunParams,
 ) -> Result<RunStats, CommandError> {
-    let in_data_dir = PathBuf::from(format!("/data-{}", run_params.uuid));
-    let out_data_dir = PathBuf::from("./data").canonicalize().unwrap();
+    let in_data_dir = PathBuf::from(format!("/data-{}/", run_params.uuid));
+    let out_data_dir = PathBuf::from("../data").canonicalize().unwrap();
     let stdin_path = run_params
         .stdin_path
-        .map(|stdin_path| in_data_dir.join(stdin_path.strip_prefix("./data").unwrap()));
+        .map(|stdin_path| in_data_dir.join(stdin_path));
     info!("Binding in {:?} to out {:?}", in_data_dir, out_data_dir);
     info!("Using stdin path {:?}", stdin_path);
 
@@ -197,9 +195,7 @@ pub fn run(
         })
         .arg(format!("--processes={}", run_params.process_limit))
         .arg(format!(
-            "--dir={}={}",
-            in_data_dir.to_str().unwrap(),
-            out_data_dir.to_str().unwrap()
+            "--dir={}={}", in_data_dir.to_str().unwrap(), out_data_dir.to_str().unwrap()
         ))
         .args(if run_params.restricted {
             vec![
@@ -259,7 +255,6 @@ pub fn run(
                 "time" => stats.time_ms = parse_ms(value),
                 "time-wall" => stats.time_wall_ms = parse_ms(value),
                 "cg-mem" => stats.memory_kib = i32::from_str(value).ok(),
-                "cg-oom-killed" => stats.status = RunStatus::MemoryLimitExceeded,
                 "exitcode" => stats.exit_code = i32::from_str(value).ok(),
                 "message" => stats.message = Some(value.into()),
                 "exitsig" => stats.exit_signal = i32::from_str(value).ok(),
@@ -267,17 +262,16 @@ pub fn run(
                     stats.status = match value {
                         "RE" => RunStatus::RuntimeError,
                         "TO" => RunStatus::TimeLimitExceeded,
-                        "XX" => RunStatus::FailedToStart,
-                        "SG" => {
-                            if stats.status == RunStatus::Ok {
-                                RunStatus::Signal
-                            } else {
-                                stats.status
-                            }
-                        }
+                        "XX" => RunStatus::RuntimeError,
+                        "SG" => if stats.status == RunStatus::Ok {
+                            RunStatus::RuntimeError
+                        } else {
+                            stats.status
+                        },
                         _ => RunStatus::RuntimeError,
                     }
-                }
+                },
+                "cg-oom-killed" => stats.status = RunStatus::MemoryLimitExceeded,
                 _ => {}
             }
         }

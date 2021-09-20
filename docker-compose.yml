@@ -1,8 +1,16 @@
 version: "3.1"
 
 services:
-  app:
+  jughisto:
     build:
       context: .
       dockerfile: Dockerfile
+    expose:
+      - "50051"
+  alvokanto:
+    depends_on:
+      - jughisto
+    build:
+      context: .
+      dockerfile: alvokanto/Dockerfile
     privileged: true

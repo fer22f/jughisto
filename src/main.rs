@@ -8,13 +8,11 @@ use serde_json::json;
 
 use actix_files::Files;
 use actix_identity::Identity;
-use actix_web::middleware::errhandlers::{ErrorHandlerResponse, ErrorHandlers};
+use actix_web::middleware::{ErrorHandlerResponse, ErrorHandlers};
 use actix_web::{dev, get, http, middleware, post, web, App, HttpServer};
 use diesel::SqliteConnection;
 use std::env;
-use std::fs;
 use std::fs::File;
-use std::io;
 use uuid::Uuid;
 
 use actix_identity::{CookieIdentityPolicy, IdentityService};
@@ -29,24 +27,63 @@ use models::user;
 
 mod broadcaster;
 mod import_contest;
-mod isolate;
-mod language;
 mod models;
-mod queue;
 mod schema;
 mod setup;
+mod queue;
+mod flash;
+mod language;
 
 use broadcaster::Broadcaster;
 use listenfd::ListenFd;
 use std::sync::Mutex;
-use std::thread;
 type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 use chrono_tz::Tz;
-use isolate::RunStats;
 use std::time::Duration;
+use queue::{JobQueuer};
+use queue::job_protocol::job_queue_server::JobQueueServer;
+use queue::job_protocol::{Language, job, Job, JobResult, job_result};
+use tonic::transport::Server;
+use std::error::Error;
+use async_channel::Sender;
+use futures::TryFutureExt;
+use actix_web::web::Data;
+use tokio::sync::broadcast;
+use std::fs;
+use submission::SubmissionCompletion;
+
+async fn update_database(mut job_result_receiver: broadcast::Receiver<JobResult>, pool: DbPool) -> Result<(), PostError> {
+    loop {
+        let job_result = job_result_receiver.recv().await.unwrap();
+        if let JobResult {
+            which: Some(job_result::Which::Judgement(judgement)),
+            ..
+        } = job_result {
+            let connection = pool.get().unwrap();
+            submission::complete_submission(&connection, SubmissionCompletion {
+                uuid: job_result.uuid,
+                verdict: match job_result::judgement::Verdict::from_i32(judgement.verdict) {
+                    Some(job_result::judgement::Verdict::Accepted) => "AC".into(),
+                    Some(job_result::judgement::Verdict::WrongAnswer) => "WA".into(),
+                    Some(job_result::judgement::Verdict::CompilationError) => "CE".into(),
+                    Some(job_result::judgement::Verdict::TimeLimitExceeded) => "TL".into(),
+                    Some(job_result::judgement::Verdict::MemoryLimitExceeded) => "ML".into(),
+                    Some(job_result::judgement::Verdict::RuntimeError) => "RE".into(),
+                    None => "XX".into(),
+                },
+                judge_start_instant: chrono::NaiveDateTime::parse_from_str(&judgement.judge_start_instant, "%Y-%m-%dT%H:%M:%S%.f").unwrap(),
+                judge_end_instant: chrono::NaiveDateTime::parse_from_str(&judgement.judge_end_instant, "%Y-%m-%dT%H:%M:%S%.f").unwrap(),
+                memory_kib: Some(judgement.memory_kib),
+                time_ms: Some(judgement.time_ms),
+                time_wall_ms: Some(judgement.time_wall_ms),
+                error_output: Some(judgement.error_output)
+            }).unwrap();
+        }
+    }
+}
 
 #[actix_web::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<(), Box<dyn Error>> {
     setup::setup_dotenv();
 
     std::env::set_var("RUST_LOG", "info");
@@ -72,49 +109,36 @@ async fn main() -> io::Result<()> {
         .expect("Couldn't find templates directory");
     let handlebars_ref = web::Data::new(handlebars);
 
-    let isolate_executable_path = setup::get_isolate_executable_path();
-    let languages = language::get_supported_languages();
-    let (channel, submission_completion_channel) =
-        queue::setup_workers(isolate_executable_path, languages.clone());
-
-    let broadcaster = Broadcaster::create();
-
-    let submission_pool = pool.clone();
-    let submission_broadcaster = broadcaster.clone();
-    thread::spawn(move || loop {
-        let submission_completion = submission_completion_channel
-            .recv()
-            .expect("Failed to recv from submission completion channel");
-        let connection = submission_pool
-            .get()
-            .expect("Couldn't get connection from the pool");
-        let uuid = String::from(&submission_completion.uuid);
-        submission::complete_submission(&connection, submission_completion)
-            .expect("Couldn't complete submission");
-        submission_broadcaster
-            .lock()
-            .expect("Submission broadcaster is not active")
-            .send("update_submission", &uuid);
-    });
+    let languages = Arc::new(DashMap::<String, Language>::new());
 
     let tz: Tz = env::var("TZ")
         .expect("TZ environment variable is not set")
         .parse()
         .expect("Invalid timezone in environment variable TZ");
 
+    let (job_sender, job_receiver) = async_channel::unbounded();
+    let (job_result_sender, job_result_receiver) = broadcast::channel(40);
+
+    let broadcaster = Broadcaster::create(job_result_receiver);
+
     let mut listenfd = ListenFd::from_env();
+    let job_sender_data = job_sender.clone();
+    let job_result_sender_data = job_result_sender.clone();
+    let languages_data = languages.clone();
+    let pool_data = pool.clone();
     let mut server = HttpServer::new(move || {
         App::new()
-            .data(pool.clone())
-            .data(SubmissionState {
-                channel: channel.clone(),
-                languages: languages.clone(),
-            })
-            .data(languages.clone())
-            .data(tz.clone())
+            .app_data(Data::new(pool_data.clone()))
+            .app_data(Data::new(job_sender_data.clone()))
+            .app_data(Data::new(job_result_sender_data.clone()))
+            .app_data(Data::new(languages_data.clone()))
+            .app_data(Data::new(tz.clone()))
+            .app_data(web::PayloadConfig::default().limit(104857600+1))
+            .app_data(web::FormConfig::default().limit(104857600+1))
+            .app_data(web::JsonConfig::default().limit(104857600+1))
             .wrap(ErrorHandlers::new().handler(http::StatusCode::UNAUTHORIZED, render_401))
             .wrap(ErrorHandlers::new().handler(http::StatusCode::BAD_REQUEST, render_400))
-            .wrap(actix_flash::Flash::default())
+            .wrap(flash::Flash::default())
             .wrap(IdentityService::new(
                 CookieIdentityPolicy::new(&private_key.as_bytes())
                     .name("user")
@@ -144,7 +168,25 @@ async fn main() -> io::Result<()> {
         server.bind("0.0.0.0:8000")?
     };
 
-    server.run().await
+    let addr = "0.0.0.0:50051".parse().unwrap();
+
+    let update_dabase_sender = job_result_sender.clone();
+    log::info!("Starting at {}", addr);
+    tokio::try_join!(
+        server.run().map_err(|e| Into::<Box<dyn Error>>::into(e)),
+        Server::builder()
+            .add_service(JobQueueServer::new(JobQueuer {
+                job_receiver,
+                job_result_sender,
+                languages,
+            }))
+            .serve(addr)
+            .map_err(|e| Into::<Box<dyn Error>>::into(e)),
+        update_database(update_dabase_sender.subscribe(), pool.clone())
+            .map_err(|e| Into::<Box<dyn Error>>::into(e))
+    )?;
+
+    Ok(())
 }
 
 use actix_web::http::StatusCode;
@@ -167,7 +209,7 @@ enum PostError {
     #[error(transparent)]
     Web(#[from] actix_web::Error),
     #[error(transparent)]
-    Queue(#[from] crossbeam::channel::SendError<queue::Submission>),
+    Queue(#[from] async_channel::SendError<Job>),
     #[error("couldn't fetch result from database")]
     Database(#[from] diesel::result::Error),
     #[error("couldn't work with the filesystem")]
@@ -209,7 +251,7 @@ impl actix_web::error::ResponseError for PostError {
     }
 }
 
-type PostResult = Result<actix_flash::Response<HttpResponse, String>, PostError>;
+type PostResult = Result<flash::Response<HttpResponse, String>, PostError>;
 
 #[derive(Error, Debug)]
 enum GetError {
@@ -245,7 +287,7 @@ type GetResult = Result<HttpResponse, GetError>;
 
 #[get("/login")]
 async fn get_login(
-    flash: Option<actix_flash::Message<String>>,
+    flash: Option<flash::Message<String>>,
     hb: web::Data<Handlebars<'_>>,
 ) -> GetResult {
     Ok(HttpResponse::Ok().body(hb.render(
@@ -264,12 +306,11 @@ fn render_401(
 ) -> actix_web::Result<ErrorHandlerResponse<dev::Body>> {
     Ok(ErrorHandlerResponse::Future(
         async move {
-            let response = actix_flash::Response::with_redirect(
+            let response = flash::Response::with_redirect(
                 String::from("Você precisa estar logado para acessar esta página"),
                 "/login",
             )
-            .respond_to(res.request())
-            .await?;
+            .respond_to(res.request());
             Ok(res.into_response(response))
         }
         .boxed_local(),
@@ -277,21 +318,20 @@ fn render_401(
 }
 
 fn render_400(
-    mut res: dev::ServiceResponse<dev::Body>,
+    res: dev::ServiceResponse<dev::Body>,
 ) -> actix_web::Result<ErrorHandlerResponse<dev::Body>> {
     Ok(ErrorHandlerResponse::Future(
         async move {
             let response = redirect_to_referer(
-                match res.take_body() {
-                    actix_web::dev::ResponseBody::Body(actix_web::dev::Body::Bytes(bytes)) => {
+                match res.response().body() {
+                    actix_web::body::AnyBody::Bytes(bytes) => {
                         String::from_utf8((&bytes).to_vec()).unwrap()
                     }
                     _ => "Entrada inválida".into(),
                 },
                 res.request(),
             )
-            .respond_to(res.request())
-            .await?;
+            .respond_to(res.request());
             Ok(res.into_response(response))
         }
         .boxed_local(),
@@ -317,15 +357,15 @@ async fn get_contest_by_id(
     identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
-    languages: web::Data<Arc<HashMap<String, LanguageParams>>>,
+    languages: web::Data<Arc<DashMap<String, Language>>>,
     session: Session,
     path: web::Path<(i32,)>,
     tz: web::Data<Tz>,
 ) -> GetResult {
     get_identity(identity)?;
 
-    #[derive(Serialize)]
-    struct Language {
+    #[derive(Serialize, Debug)]
+    struct LanguageContext {
         order: i32,
         name: String,
         value: String,
@@ -333,7 +373,7 @@ async fn get_contest_by_id(
 
     #[derive(Serialize)]
     struct ContestContext {
-        languages: Vec<Language>,
+        languages: Vec<LanguageContext>,
         language: Option<String>,
         problems: Vec<ProblemByContest>,
         submissions: Vec<FormattedSubmission>,
@@ -341,10 +381,10 @@ async fn get_contest_by_id(
 
     let mut languages = languages
         .iter()
-        .map(|(value, language_params)| Language {
-            order: language_params.order,
-            value: value.into(),
-            name: language_params.name.clone(),
+        .map(|kv| LanguageContext {
+            order: kv.value().order,
+            value: kv.key().into(),
+            name: kv.value().name.clone(),
         })
         .collect::<Vec<_>>();
     languages.sort_by(|a, b| a.order.cmp(&b.order));
@@ -384,17 +424,15 @@ async fn post_login(
 ) -> PostResult {
     let connection = pool.get()?;
 
-    use actix_web::error::BlockingError;
     use user::PasswordMatched;
     use user::UserHashingError;
     match web::block(move || user::check_matching_password(&connection, &form.name, &form.password))
         .await
-        .map_err(|e| match e {
-            BlockingError::Error(UserHashingError::Database(e)) => PostError::Database(e),
-            BlockingError::Error(UserHashingError::Hash(_)) => {
+        .map_err(|e| PostError::Web(e.into()))?.map_err(|e| match e {
+            UserHashingError::Database(e) => PostError::Database(e),
+            UserHashingError::Hash(_) => {
                 PostError::Validation("Senha inválida".into())
-            }
-            BlockingError::Canceled => PostError::Web(e.into()),
+            },
         })? {
         PasswordMatched::UserDoesntExist => {
             Err(PostError::Validation("Usuário inexistente".into()))
@@ -411,7 +449,7 @@ async fn post_login(
                 })
                 .map_err(|_| PostError::Custom("Usuário no banco de dados inconsistente".into()))?,
             );
-            Ok(actix_flash::Response::with_redirect("".into(), "/"))
+            Ok(flash::Response::with_redirect("".into(), "/"))
         }
     }
 }
@@ -424,7 +462,7 @@ async fn submission_updates(broadcaster: web::Data<Mutex<Broadcaster>>) -> HttpR
         .new_client();
 
     HttpResponse::Ok()
-        .header("content-type", "text/event-stream")
+        .append_header(("content-type", "text/event-stream"))
         .streaming(rx)
 }
 
@@ -495,16 +533,9 @@ struct SubmissionForm {
     source_text: String,
 }
 
-use crossbeam::channel::Sender;
-use language::LanguageParams;
-use queue::Submission;
-use std::collections::HashMap;
 use std::sync::Arc;
-
-struct SubmissionState {
-    channel: Sender<Submission>,
-    languages: Arc<HashMap<String, LanguageParams>>,
-}
+use dashmap::DashMap;
+use std::collections::HashMap;
 
 use actix_web::HttpRequest;
 
@@ -518,23 +549,23 @@ fn redirect_to_referer(message: String, request: &HttpRequest) -> PostResult {
     let referer_str = referer
         .to_str()
         .map_err(|_| PostError::Validation("Cabeçalho Referer inválido".into()))?;
-    Ok(actix_flash::Response::with_redirect(message, referer_str))
+    Ok(flash::Response::with_redirect(message, referer_str))
 }
 
 #[post("/submissions/")]
 async fn create_submission(
     identity: Identity,
     form: web::Form<SubmissionForm>,
-    submission_state: web::Data<SubmissionState>,
     pool: web::Data<DbPool>,
+    job_sender: web::Data<Sender<Job>>,
+    languages: web::Data<Arc<DashMap<String, Language>>>,
     session: Session,
     request: HttpRequest,
 ) -> PostResult {
     let identity = get_identity(identity)?;
     let connection = pool.get()?;
 
-    submission_state
-        .languages
+    languages
         .get(&form.language)
         .ok_or(PostError::Validation("Linguagem inexistente".into()))?;
 
@@ -554,18 +585,22 @@ async fn create_submission(
     let metadata =
         problem::get_problem_by_contest_id_metadata(&connection, form.contest_problem_id)?;
 
-    submission_state.channel.send(Submission {
-        uuid,
+    job_sender.send(Job {
+        uuid: uuid.to_string(),
         language: (&form.language).into(),
-        source_text: (&form.source_text).into(),
         time_limit_ms: metadata.time_limit_ms,
         memory_limit_kib: metadata.memory_limit_bytes / 1_024,
-        test_count: metadata.test_count,
-        test_pattern: format!("./data/{}/{}", metadata.id, metadata.test_pattern).into(),
-        checker_binary_path: format!("./data/{}/checker", metadata.id).into(),
-    })?;
 
-    session.set("language", &form.language)?;
+        which: Some(job::Which::Judgement(job::Judgement {
+            source_text: (&form.source_text).into(),
+            test_count: metadata.test_count,
+            test_pattern: format!("./{}/{}", metadata.id, metadata.test_pattern).into(),
+            checker_language: metadata.checker_language,
+            checker_source_path: format!("./{}/{}", metadata.id, metadata.checker_path).into(),
+        }))
+    }).await?;
+
+    session.insert("language", &form.language)?;
 
     redirect_to_referer(format!("Submetido {} com sucesso!", uuid), &request)
 }
@@ -625,13 +660,15 @@ use std::io::Read;
 use std::io::Write;
 use std::iter::FromIterator;
 use std::str;
+use std::path::PathBuf;
 
 #[post("/contests/")]
 async fn create_contest(
     identity: Identity,
     pool: web::Data<DbPool>,
     mut payload: Multipart,
-    languages: web::Data<Arc<HashMap<String, LanguageParams>>>,
+    job_sender: web::Data<Sender<Job>>,
+    job_result_sender: web::Data<broadcast::Sender<JobResult>>,
 ) -> PostResult {
     let identity = get_identity(identity)?;
 
@@ -701,7 +738,7 @@ async fn create_contest(
     )?;
 
     fn polygon_url_to_id_without_revision(url: String) -> String {
-        url.replace("https://polygon.codeforces.com/", "polygon:")
+        url.replace("https://polygon.codeforces.com/", "polygon.")
             .replace("/", ".")
     }
 
@@ -811,8 +848,7 @@ async fn create_contest(
                     .find(|s| s.tag == "main")
                     .ok_or(PostError::Validation("No main solution".into()))?
                     .source
-                    .path
-                    .clone(),
+                    .path.clone(),
                 main_solution_language: map_codeforces_language(
                     &metadata
                         .assets
@@ -836,138 +872,13 @@ async fn create_contest(
             },
         )?;
 
-        let isolate_executable_path = setup::get_isolate_executable_path();
-        let isolate_box = isolate::new_isolate_box(&isolate_executable_path, 1)
-            .map_err(|_| PostError::Validation("Can't create isolate box".into()))?;
-
-        use std::path::PathBuf;
-
-        let uuid = "import-solution";
-        let compile_stats = language::compile(
-            &isolate_executable_path,
-            &isolate_box,
-            languages.get(&problem.checker_language).unwrap(),
-            &uuid,
-            &PathBuf::from("/data-import-solution/")
-                .join(&problem.id)
-                .join(problem.checker_path),
-            &PathBuf::from("/box/program"),
-        )
-        .map_err(|_| PostError::Validation("Couldn't compile checker".into()))?;
-        if match compile_stats {
-            None => false,
-            Some(RunStats {
-                exit_code: Some(c), ..
-            }) => c != 0,
-            Some(RunStats {
-                exit_code: None, ..
-            }) => true,
-        } {
-            let stats = compile_stats.unwrap();
-            let mut stderr = String::new();
-            File::open(&stats.stderr_path)
-                .expect("Stderr should exist")
-                .read_to_string(&mut stderr)
-                .unwrap_or(0);
-            File::open(&stats.stdout_path)
-                .expect("Stdout should exist")
-                .read_to_string(&mut stderr)
-                .unwrap_or(0);
-            info!("Couldn't compile: {:#?}", stats);
-            info!("Stderr: {}", stderr);
-            return Err(PostError::Validation("Couldn't compile checker".into()));
-        }
-        fs::copy(
-            isolate_box.path.join("program"),
-            &PathBuf::from("./data").join(&problem.id).join("checker"),
-        )?;
-
-        let compile_stats = language::compile(
-            &isolate_executable_path,
-            &isolate_box,
-            languages.get(&problem.validator_language).unwrap(),
-            &uuid,
-            &PathBuf::from("/data-import-solution/")
-                .join(&problem.id)
-                .join(problem.validator_path),
-            &PathBuf::from("/box/program"),
-        )
-        .map_err(|_| PostError::Validation("Couldn't compile validator".into()))?;
-        if match compile_stats {
-            None => false,
-            Some(RunStats {
-                exit_code: Some(c), ..
-            }) => c != 0,
-            Some(RunStats {
-                exit_code: None, ..
-            }) => true,
-        } {
-            let stats = compile_stats.unwrap();
-            let mut stderr = String::new();
-            File::open(&stats.stderr_path)
-                .expect("Stderr should exist")
-                .read_to_string(&mut stderr)
-                .unwrap_or(0);
-            File::open(&stats.stdout_path)
-                .expect("Stdout should exist")
-                .read_to_string(&mut stderr)
-                .unwrap_or(0);
-            info!("Couldn't compile: {:#?}", stats);
-            info!("Stderr: {}", stderr);
-            return Err(PostError::Validation("Couldn't compile validator".into()));
-        }
-        fs::copy(
-            isolate_box.path.join("program"),
-            &PathBuf::from("./data").join(&problem.id).join("validator"),
-        )?;
-
-        let compile_stats = language::compile(
-            &isolate_executable_path,
-            &isolate_box,
-            languages.get(&problem.main_solution_language).unwrap(),
-            &uuid,
-            &PathBuf::from("/data-import-solution/")
-                .join(&problem.id)
-                .join(problem.main_solution_path),
-            &PathBuf::from("/box/program"),
-        )
-        .map_err(|_| PostError::Validation("Couldn't compile main solution".into()))?;
-        if match compile_stats {
-            None => false,
-            Some(RunStats {
-                exit_code: Some(c), ..
-            }) => c != 0,
-            Some(RunStats {
-                exit_code: None, ..
-            }) => true,
-        } {
-            let stats = compile_stats.unwrap();
-            let mut stderr = String::new();
-            File::open(&stats.stderr_path)
-                .expect("Stderr should exist")
-                .read_to_string(&mut stderr)
-                .unwrap_or(0);
-            File::open(&stats.stdout_path)
-                .expect("Stdout should exist")
-                .read_to_string(&mut stderr)
-                .unwrap_or(0);
-            info!("Couldn't compile: {:#?}", stats);
-            info!("Stderr: {}", stderr);
-            return Err(PostError::Validation(
-                "Couldn't compile main solution".into(),
-            ));
-        }
-        fs::copy(
-            isolate_box.path.join("program"),
-            &PathBuf::from("./data")
-                .join(&problem.id)
-                .join("main_solution"),
-        )?;
-
         for (i, test) in metadata.judging.testset[0].tests.test.iter().enumerate() {
             let i = i + 1;
-            let test_path = PathBuf::from(format!("./data/{}", problem_id))
-                .join(import_contest::format_width(&problem.test_pattern, i));
+            let test_path = format!(
+                "./{}/{}",
+                problem_id,
+                import_contest::format_width(&problem.test_pattern, i)
+            );
 
             info!(
                 "Iterating through test {} to {:#?}, which is {}",
@@ -981,146 +892,66 @@ async fn create_contest(
                 info!("Extracting {:#?} from zip", test_name);
                 std::io::copy(
                     &mut zip.by_name(&test_name.to_str().unwrap())?,
-                    &mut File::create(&test_path)?,
+                    &mut File::create(PathBuf::from("./data/").join(&test_path))?,
                 )?;
             } else {
                 let cmd: Vec<_> = test.cmd.as_ref().unwrap().split(" ").collect();
-                let binary_path =
-                    PathBuf::from(format!("./data/{}", problem_id)).join(cmd.get(0).unwrap());
-                if !binary_path.exists() {
-                    let compile_stats = language::compile(
-                        &isolate_executable_path,
-                        &isolate_box,
-                        languages.get("cpp.17.g++").unwrap(),
-                        &uuid,
-                        &PathBuf::from("/data-import-solution/")
-                            .join(&problem.id)
-                            .join("files")
-                            .join(cmd.get(0).unwrap())
-                            .with_extension("cpp"),
-                        &PathBuf::from("/box/program"),
-                    )
-                    .map_err(|e| {
-                        info!("{}", e);
-                        PostError::Validation("Couldn't compile an intermediate program".into())
-                    })?;
-                    if match compile_stats {
-                        None => false,
-                        Some(RunStats {
-                            exit_code: Some(c), ..
-                        }) => c != 0,
-                        Some(RunStats {
-                            exit_code: None, ..
-                        }) => true,
-                    } {
-                        let stats = compile_stats.unwrap();
-                        let mut stderr = String::new();
-                        File::open(&stats.stderr_path)
-                            .expect("Stderr should exist")
-                            .read_to_string(&mut stderr)
-                            .unwrap_or(0);
-                        File::open(&stats.stdout_path)
-                            .expect("Stdout should exist")
-                            .read_to_string(&mut stderr)
-                            .unwrap_or(0);
-                        info!("Couldn't compile: {:#?}", stats);
-                        info!("Stderr: {}", stderr);
-                        return Err(PostError::Validation(
-                            "Couldn't compile an intermediate program".into(),
-                        ));
-                    }
-                    fs::copy(isolate_box.path.join("program"), &binary_path)?;
-                }
-
-                let run_stats = isolate::execute(
-                    &isolate_executable_path,
-                    &isolate_box,
-                    &isolate::CommandTuple {
-                        binary_path: PathBuf::from("/data-import-solution/")
-                            .join(binary_path.strip_prefix("./data").unwrap()),
-                        args: cmd[1..].iter().map(|s| s.clone().into()).collect(),
-                    },
-                    &isolate::ExecuteParams {
-                        uuid: &uuid,
-                        memory_limit_kib: problem.memory_limit_bytes / 1_024,
-                        time_limit_ms: problem.time_limit_ms,
-                        stdin_path: None,
-                        process_limit: 1,
-                    },
+                let run_stats = language::run_cached(
+                    &job_sender,
+                    &job_result_sender,
+                    &"cpp.17.g++".into(),
+                    format!("./{}/files/{}.cpp", problem.id, cmd.get(0).unwrap()),
+                    cmd[1..].iter().map(|s| s.clone().into()).collect(),
+                    None,
+                    Some(test_path.clone()),
+                    problem.memory_limit_bytes / 1_024,
+                    problem.time_limit_ms,
                 )
+                .await
                 .map_err(|_| {
                     PostError::Validation("Couldn't use an intermediate program".into())
                 })?;
-                if match run_stats {
-                    RunStats {
-                        exit_code: Some(c), ..
-                    } => c != 0,
-                    RunStats {
-                        exit_code: None, ..
-                    } => true,
-                } {
-                    let stats = run_stats;
-                    let mut stderr = String::new();
-                    File::open(&stats.stderr_path)
-                        .expect("Stderr should exist")
-                        .read_to_string(&mut stderr)
-                        .unwrap_or(0);
-                    File::open(&stats.stdout_path)
-                        .expect("Stdout should exist")
-                        .read_to_string(&mut stderr)
-                        .unwrap_or(0);
-                    info!("Couldn't compile: {:#?}", stats);
-                    info!("Stderr: {}", stderr);
-                    return Err(PostError::Validation(
-                        "Couldn't use an intermediate program".into(),
-                    ));
+
+                if run_stats.result != i32::from(job_result::run_cached::Result::Ok) {
+                    return Err(PostError::Validation("Couldn't run an intermediate program".into()));
                 }
-                fs::copy(isolate_box.path.join("stdout"), &test_path)?;
             }
 
-            let run_stats = isolate::execute(
-                &isolate_executable_path,
-                &isolate_box,
-                &isolate::CommandTuple {
-                    binary_path: format!("/data-import-solution/{}/main_solution", problem_id)
-                        .into(),
-                    args: vec![],
-                },
-                &isolate::ExecuteParams {
-                    uuid: &uuid,
-                    memory_limit_kib: problem.memory_limit_bytes / 1_024,
-                    time_limit_ms: problem.time_limit_ms,
-                    stdin_path: Some(&test_path),
-                    process_limit: 1,
-                },
+            let run_stats = language::run_cached(
+                &job_sender,
+                &job_result_sender,
+                &problem.main_solution_language,
+                format!("./{}/{}", problem.id, problem.main_solution_path),
+                vec![],
+                Some(test_path.clone()),
+                Some(format!("{}.a", test_path)),
+                problem.memory_limit_bytes / 1_024,
+                problem.time_limit_ms,
             )
+            .await
             .map_err(|_| PostError::Validation("Couldn't run solution on test".into()))?;
-            if match run_stats {
-                RunStats {
-                    exit_code: Some(c), ..
-                } => c != 0,
-                RunStats {
-                    exit_code: None, ..
-                } => true,
-            } {
-                let stats = run_stats;
-                let mut stderr = String::new();
-                File::open(&stats.stderr_path)
-                    .expect("Stderr should exist")
-                    .read_to_string(&mut stderr)
-                    .unwrap_or(0);
-                File::open(&stats.stdout_path)
-                    .expect("Stdout should exist")
-                    .read_to_string(&mut stderr)
-                    .unwrap_or(0);
-                info!("Couldn't compile: {:#?}", stats);
-                info!("Stderr: {}", stderr);
-                return Err(PostError::Validation(
-                    "Couldn't run main solution on test".into(),
-                ));
+            if run_stats.exit_code != 0 {
+                return Err(PostError::Validation("Couldn't run solution on test".into()));
             }
-            fs::copy(run_stats.stdout_path, test_path.with_extension("a"))?;
         }
+
+        language::judge(
+            &job_sender,
+            &job_result_sender,
+            &problem.main_solution_language,
+            fs::read_to_string(
+                PathBuf::from(format!("./data/{}/{}", problem.id, problem.main_solution_path))
+            )?,
+            problem.test_count,
+            problem.test_pattern,
+            problem.checker_language,
+            problem.checker_path,
+            problem.memory_limit_bytes / 1_024,
+            problem.time_limit_ms,
+        )
+        .await
+        .map_err(|_| PostError::Validation("Couldn't judge main solution".into()))?;
+
 
         contest::relate_problem(
             &connection,
@@ -1138,7 +969,7 @@ async fn create_contest(
         )?;
     }
 
-    Ok(actix_flash::Response::new(
+    Ok(flash::Response::new(
         None,
         HttpResponse::Ok().body(imported.3),
     ))

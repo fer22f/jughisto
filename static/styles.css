@@ -7,22 +7,23 @@ html, body {
   font-family: sans-serif;
 }
 
-form.main {
+#submission {
   border: 1px solid #ddd;
   display: flex;
   flex-flow: column;
+  flex: 1;
 }
 
-.main > label {
+#submission > label {
   font-size: 14px;
   margin: 8px;
 }
 
-.main > input, .main > button, .main > textarea, .main > select {
+#submission > input, #submission > button, #submission > textarea, #submission > select {
   margin: 0 8px 8px 8px;
 }
 
-.main > button {
+#submission > button {
   margin-top: 8px;
   padding: 4px;
   box-sizing: border-box;
@@ -48,6 +49,7 @@ form.main {
   padding: 8px;
   font-size: 16px;
   overflow: auto;
+  max-width: 250px;
 }
 
 #submissions-list {
@@ -77,8 +79,15 @@ form.main {
 }
 
 .compilation-result {
-  white-space: pre;
+  white-space: nowrap;
   font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.submission:hover .compilation-result {
+  white-space: unset;
 }
 
 .lds-hourglass {
@@ -97,38 +106,38 @@ form.main {
   z-index: 1;
 }
 
-.accepted {
-  background: #291;
+.waiting-judge {
+  background: #777;
   color: white;
 }
 
+.accepted {
+  background: #2DFF0F;
+  color: black;
+}
+
 .wrong-answer {
-  background: #b21;
+  background: #900e00;
   color: white;
 }
 
 .runtime-error {
-  background: #80c;
+  background: #CA3CFD;
   color: white;
 }
 
 .memory-limit {
-  background: #cc6600;
+  background: #AD5A03;
   color: white;
 }
 
 .time-limit {
-  background: #03c;
-  color: white;
-}
-
-.presentation-error {
-  background: #2aa;
+  background: #0064BB;
   color: white;
 }
 
 .compilation-error {
-  background: #dda218;
+  background: #000;
   color: white;
 }
 
@@ -157,11 +166,6 @@ form.main {
   100% {
     transform: rotate(360deg);
   }
-}
-
-.waiting-judge {
-  background: #777;
-  color: white;
 }
 
 table {
