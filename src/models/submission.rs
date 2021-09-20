@@ -32,7 +32,7 @@ pub struct NewSubmission {
 }
 
 pub fn insert_submission(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     new_submission: NewSubmission,
 ) -> QueryResult<()> {
     insert_into(submission::table)
@@ -53,7 +53,7 @@ pub struct SubmissionCompletion {
 }
 
 pub fn complete_submission(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     submission: SubmissionCompletion,
 ) -> QueryResult<()> {
     diesel::update(submission::table)
@@ -71,7 +71,7 @@ pub fn complete_submission(
     Ok(())
 }
 
-pub fn get_submissions(connection: &SqliteConnection) -> QueryResult<Vec<Submission>> {
+pub fn get_submissions(connection: &PgConnection) -> QueryResult<Vec<Submission>> {
     submission::table
         .order_by(submission::submission_instant.desc())
         .load::<Submission>(connection)

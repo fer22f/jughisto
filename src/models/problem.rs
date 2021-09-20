@@ -1,7 +1,7 @@
 use chrono::prelude::*;
 use diesel::insert_into;
 use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
+use diesel::pg::PgConnection;
 use serde::Serialize;
 
 use crate::schema::contest_problems;
@@ -54,7 +54,7 @@ pub struct ProblemByContest {
 }
 
 pub fn get_problems_by_contest_id(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     contest_id: i32,
 ) -> QueryResult<Vec<ProblemByContest>> {
     problem::table
@@ -82,7 +82,7 @@ pub struct ProblemByContestMetadata {
 }
 
 pub fn get_problem_by_contest_id_metadata(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     contest_problem_id: i32,
 ) -> QueryResult<ProblemByContestMetadata> {
     problem::table
@@ -106,7 +106,7 @@ pub fn get_problem_by_contest_id_metadata(
 }
 
 pub fn upsert_problem(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     new_problem: NewProblem,
 ) -> QueryResult<Problem> {
     match problem::table

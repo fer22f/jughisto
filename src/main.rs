@@ -10,7 +10,7 @@ use actix_files::Files;
 use actix_identity::Identity;
 use actix_web::middleware::{ErrorHandlerResponse, ErrorHandlers};
 use actix_web::{dev, get, http, middleware, post, web, App, HttpServer};
-use diesel::SqliteConnection;
+use diesel::pg::PgConnection;
 use std::env;
 use std::fs::File;
 use uuid::Uuid;
@@ -37,7 +37,7 @@ mod language;
 use broadcaster::Broadcaster;
 use listenfd::ListenFd;
 use std::sync::Mutex;
-type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
+type DbPool = r2d2::Pool<ConnectionManager<PgConnection>>;
 use chrono_tz::Tz;
 use std::time::Duration;
 use queue::{JobQueuer};
@@ -84,8 +84,6 @@ async fn update_database(mut job_result_receiver: broadcast::Receiver<JobResult>
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    setup::setup_dotenv();
-
     std::env::set_var("RUST_LOG", "info");
     env_logger::init();
 
@@ -94,9 +92,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let database_url =
         env::var("DATABASE_URL").expect("DATABASE_URL environment variable is not set");
-    let manager = ConnectionManager::<SqliteConnection>::new(database_url);
+    let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = r2d2::Pool::builder()
-        .max_size(1)
+        .max_size(50)
         .connection_timeout(Duration::from_secs(1))
         .build(manager)
         .expect("Failed to create pool.");
@@ -943,9 +941,9 @@ async fn create_contest(
                 PathBuf::from(format!("./data/{}/{}", problem.id, problem.main_solution_path))
             )?,
             problem.test_count,
-            problem.test_pattern,
+            format!("./{}/{}", problem.id, problem.test_pattern).into(),
             problem.checker_language,
-            problem.checker_path,
+            format!("./{}/{}", problem.id, problem.checker_path).into(),
             problem.memory_limit_bytes / 1_024,
             problem.time_limit_ms,
         )

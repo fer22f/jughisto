@@ -1,10 +1,18 @@
-FROM rust:1.55-alpine3.14
-RUN apk --no-cache add libc-dev protoc gcc g++
+FROM rust:1.55
+RUN apt-get update && \
+    apt-get install -yq --no-install-recommends \
+    libc-dev \
+    protobuf-compiler \
+    gcc \
+    g++ \
+    libpq-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 RUN rustup component add rustfmt
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo install diesel_cli --no-default-features --features sqlite-bundled && \
+    cargo install diesel_cli --no-default-features --features postgres && \
     cargo install systemfd && \
     cargo install cargo-watch
 WORKDIR /usr/src/jughisto
-CMD systemfd --no-pid -s http::0.0.0.0:8000 -- cargo watch -x 'run --color always' -i alvokanto/
+CMD diesel setup && diesel migration run && systemfd --no-pid -s http::0.0.0.0:8000 -- cargo watch -x 'run --color always' -i alvokanto/

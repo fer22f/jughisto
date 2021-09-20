@@ -1,7 +1,7 @@
 use chrono::prelude::*;
 use diesel::insert_into;
 use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
+use diesel::pg::PgConnection;
 use serde::Serialize;
 use std::env;
 use thiserror::Error;
@@ -42,7 +42,7 @@ pub struct NewUser<'a> {
     pub creation_user_id: Option<i32>,
 }
 
-pub fn get_user_by_name(connection: &SqliteConnection, name: &str) -> QueryResult<User> {
+pub fn get_user_by_name(connection: &PgConnection, name: &str) -> QueryResult<User> {
     user::table
         .select(USER_COLUMNS)
         .filter(user::name.eq(name))
@@ -64,7 +64,7 @@ pub enum PasswordMatched {
 }
 
 pub fn check_matching_password(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     name: &str,
     password: &str,
 ) -> Result<PasswordMatched, UserHashingError> {
@@ -86,7 +86,7 @@ pub fn check_matching_password(
 }
 
 pub fn insert_new_user(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     new_user: NewUser,
 ) -> Result<User, UserHashingError> {
     let config = argon2::Config::default();

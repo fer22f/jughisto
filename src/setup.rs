@@ -1,16 +1,11 @@
 use chrono::prelude::*;
-use dotenv::dotenv;
 use log::info;
 
 use crate::models::user;
 use crate::models::user::NewUser;
-use diesel::SqliteConnection;
+use diesel::PgConnection;
 
-pub fn setup_dotenv() {
-    dotenv().ok();
-}
-
-pub fn setup_admin(connection: &SqliteConnection) {
+pub fn setup_admin(connection: &PgConnection) {
     use user::PasswordMatched;
 
     let admin_user_name = "admin";

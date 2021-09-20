@@ -26,7 +26,7 @@ pub struct NewContest {
 }
 
 pub fn insert_contest(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     new_contest: NewContest,
 ) -> QueryResult<Contest> {
     insert_into(contest::table)
@@ -35,7 +35,7 @@ pub fn insert_contest(
     contest::table.order(contest::id.desc()).first(connection)
 }
 
-pub fn get_contests(connection: &SqliteConnection) -> QueryResult<Vec<Contest>> {
+pub fn get_contests(connection: &PgConnection) -> QueryResult<Vec<Contest>> {
     contest::table.load(connection)
 }
 
@@ -48,7 +48,7 @@ pub struct NewContestProblems {
 }
 
 pub fn relate_problem(
-    connection: &SqliteConnection,
+    connection: &PgConnection,
     new_contest_problems: NewContestProblems,
 ) -> QueryResult<()> {
     insert_into(contest_problems::table)
