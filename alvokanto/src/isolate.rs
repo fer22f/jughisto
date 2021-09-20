@@ -15,8 +15,6 @@ pub struct CommandTuple {
 pub enum CommandError {
     #[error("couldn't get command output")]
     CommandIo(#[source] io::Error),
-    #[error("couldn't copy file")]
-    CopyIo(#[source] io::Error),
     #[error("{0}")]
     IsolateCommandFailed(String),
     #[error(transparent)]

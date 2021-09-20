@@ -400,7 +400,7 @@ async fn get_contest_by_id(
                 language: session.get("language")?,
                 submissions: submissions
                     .iter()
-                    .map(|s| format_submission(&tz, s))
+                    .map(|(s, c)| format_submission(&tz, s, c))
                     .collect(),
             },
         )?,
@@ -479,7 +479,11 @@ fn format_utc_date_time(tz: &Tz, input: NaiveDateTime) -> String {
         .to_string()
 }
 
-fn format_submission(tz: &Tz, submission: &models::submission::Submission) -> FormattedSubmission {
+fn format_submission(
+    tz: &Tz,
+    submission: &models::submission::Submission,
+    contest_problem: &models::submission::ContestProblem
+) -> FormattedSubmission {
     FormattedSubmission {
         uuid: (&submission.uuid).into(),
         verdict: submission
@@ -488,7 +492,7 @@ fn format_submission(tz: &Tz, submission: &models::submission::Submission) -> Fo
             .map(|s| String::from(s))
             .unwrap_or("WJ".into())
             .into(),
-        problem_label: "A".into(),
+        problem_label: contest_problem.label.clone(),
         submission_instant: format_utc_date_time(tz, submission.submission_instant),
         error_output: submission.error_output.as_ref().map(|s| s.into()),
     }
@@ -517,7 +521,7 @@ async fn get_submissions(
             &SubmissionsContext {
                 submissions: submissions
                     .iter()
-                    .map(|s| format_submission(&tz, s))
+                    .map(|(s, c)| format_submission(&tz, s, c))
                     .collect(),
             },
         )?,
@@ -721,7 +725,10 @@ async fn create_contest(
         .polygon_zip
         .ok_or(PostError::Validation("Arquivo não informado".into()))?;
     let imported = import_contest::import_file(polygon_zip)
-        .map_err(|_| PostError::Validation("Não foi possível importar".into()))?;
+        .map_err(|e| {
+            println!("{}", e);
+            PostError::Validation("Não foi possível importar".into())
+        })?;
     let connection = pool.get()?;
 
     let contest = contest::insert_contest(

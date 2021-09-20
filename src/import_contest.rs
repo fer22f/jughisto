@@ -98,7 +98,6 @@ mod xml {
             pub assets: Assets,
             pub properties: Properties,
             pub stresses: Stresses,
-            pub tags: Tags,
         }
 
         #[derive(Deserialize, Debug)]

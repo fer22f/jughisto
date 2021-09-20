@@ -1,4 +1,5 @@
 use crate::schema::submission;
+use crate::schema::contest_problems;
 use chrono::prelude::*;
 use diesel::insert_into;
 use diesel::prelude::*;
@@ -18,6 +19,14 @@ pub struct Submission {
     pub error_output: Option<String>,
     pub contest_problem_id: i32,
     pub user_id: i32,
+}
+
+#[derive(Queryable)]
+pub struct ContestProblem {
+    pub id: i32,
+    pub label: String,
+    pub contest_id: i32,
+    pub problem_id: String,
 }
 
 #[derive(Insertable)]
@@ -71,8 +80,9 @@ pub fn complete_submission(
     Ok(())
 }
 
-pub fn get_submissions(connection: &PgConnection) -> QueryResult<Vec<Submission>> {
+pub fn get_submissions(connection: &PgConnection) -> QueryResult<Vec<(Submission, ContestProblem)>> {
     submission::table
+        .inner_join(contest_problems::table)
         .order_by(submission::submission_instant.desc())
-        .load::<Submission>(connection)
+        .load::<(Submission, ContestProblem)>(connection)
 }

@@ -10,7 +10,6 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th>
         <th>Nome</th>
         <th class="right">Momento do Início</th>
         <th class="right">Momento do Final</th>
@@ -20,7 +19,6 @@
     <tbody>
       {{ #each contests }}
       <tr>
-        <td><a href="/contests/{{ this.id }}">{{ this.id }}</td>
         <td><a href="/contests/{{ this.id }}">{{ this.name }}</a></td>
         <td class="right"><a href="/contests/{{ this.id }}">{{ this.start_instant }}</a></td>
         <td class="right"><a href="/contests/{{ this.id }}">{{ this.end_instant }}</a></td>

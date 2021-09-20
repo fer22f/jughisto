@@ -140,6 +140,7 @@ fn run_cached(
             .map(|c|
             c.replace("{.}", inside_path_with_suffix.to_str().unwrap())
                 .replace("{}", inside_path_without_suffix.to_str().unwrap()))
+            .chain(request.arguments)
             .collect(),
     };
 
@@ -302,7 +303,7 @@ fn judge(
 
     let judge_start_instant = Local::now().naive_utc();
 
-    if let Compile::Command(transform, command, output) = &language.compile {
+    if let Compile::Command(transform, command, _) = &language.compile {
         let mut file = File::create(isolate_box.path.join(format!("x{}", language.suffix))).unwrap();
         file.write_all(transform(request.source_text, "x".into()).as_bytes()).unwrap();
         file.sync_data().unwrap();
@@ -317,8 +318,6 @@ fn judge(
                         .replace("{}", "x".into()))
                 .collect(),
         };
-
-        info!("Starting to compile: {:#?}", command);
 
         let compile_stats = isolate::compile(
             &isolate_executable_path,

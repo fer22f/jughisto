@@ -175,6 +175,7 @@ table {
 
 th {
   padding: 8px;
+  text-align: left;
 }
 
 th.right, td.right {
