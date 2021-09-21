@@ -36,7 +36,7 @@ fn run_cached(
     request: job::RunCached
 ) -> JobResult {
     info!("Starting to run");
-    let root_data = PathBuf::from("../data/");
+    let root_data = PathBuf::from("/data/");
 
     let language = supported_languages.get(&language);
     if let None = language {
@@ -48,7 +48,7 @@ fn run_cached(
     }
     let language = language.unwrap();
 
-    let path_with_suffix = PathBuf::from("../data/").join(&request.source_path);
+    let path_with_suffix = PathBuf::from("/data/").join(&request.source_path);
     let path_without_suffix = path_with_suffix.with_extension("");
 
     if let Compile::Command(_, command, output) = &language.compile {
@@ -200,7 +200,7 @@ fn judge(
     memory_limit_kib: i32,
     request: job::Judgement
 ) -> JobResult {
-    let root_data = PathBuf::from("../data/");
+    let root_data = PathBuf::from("/data/");
 
     let language = supported_languages.get(&language);
     if let None = language {
@@ -222,7 +222,7 @@ fn judge(
     }
     let checker_language = checker_language.unwrap();
 
-    let path_with_suffix = PathBuf::from("../data/").join(&request.checker_source_path);
+    let path_with_suffix = PathBuf::from("/data/").join(&request.checker_source_path);
     let path_without_suffix = path_with_suffix.with_extension("");
 
     if let Compile::Command(_, command, output) = &checker_language.compile {

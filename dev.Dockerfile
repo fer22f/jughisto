@@ -1,11 +1,11 @@
-FROM rust:1.55
+FROM rust:1.55-slim-bullseye
 RUN apt-get update && \
     apt-get install -yq --no-install-recommends \
-    libc-dev \
-    protobuf-compiler \
-    gcc \
-    g++ \
-    libpq-dev && \
+        libc-dev \
+        protobuf-compiler \
+        gcc \
+        g++ \
+        libpq-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 RUN rustup component add rustfmt

@@ -1,2 +1,7 @@
 target/
+
 data/
+
+alvokanto/target/
+
+.prod_env

@@ -1,5 +1,12 @@
-FROM rust:1.55-alpine as builder
-RUN apk --no-cache add libc-dev protoc libpq
+FROM rust:1.55-slim-bullseye as builder
+RUN apt-get update && \
+    apt-get install -yq --no-install-recommends \
+        protobuf-compiler \
+        gcc \
+        g++ \
+        libpq-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 RUN rustup component add rustfmt
 WORKDIR /usr/src/jughisto
 ADD . .
@@ -11,11 +18,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     mkdir -p /usr/local/jughisto && \
     cp -r /usr/src/jughisto/templates/ /usr/local/jughisto/templates/ && \
     cp -r /usr/src/jughisto/static/ /usr/local/jughisto/static/ && \
-    cargo install diesel_cli --no-default-features --features postgres && \
-    mkdir /usr/local/jughisto/data/ && \
-    diesel setup
+    cargo install diesel_cli --no-default-features --features postgres
 
-FROM alpine:latest
+FROM debian:bullseye-slim
+RUN apt-get update && \
+    apt-get install -yq --no-install-recommends \
+        libpq5 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/bin/jughisto /usr/local/bin/
 COPY --from=builder /usr/local/jughisto/templates/ /usr/local/jughisto/templates/
 COPY --from=builder /usr/local/jughisto/static/ /usr/local/jughisto/static/

@@ -805,7 +805,7 @@ async fn create_contest(
                 .get(1)
                 .unwrap()
                 .as_str();
-            let data_path = format!("./data/{}/{}", problem_id, relative_path);
+            let data_path = format!("/data/{}/{}", problem_id, relative_path);
 
             if name.ends_with("/") {
                 info!("Creating directory {} into {}", name, data_path);
@@ -897,7 +897,7 @@ async fn create_contest(
                 info!("Extracting {:#?} from zip", test_name);
                 std::io::copy(
                     &mut zip.by_name(&test_name.to_str().unwrap())?,
-                    &mut File::create(PathBuf::from("./data/").join(&test_path))?,
+                    &mut File::create(PathBuf::from("/data/").join(&test_path))?,
                 )?;
             } else {
                 let cmd: Vec<_> = test.cmd.as_ref().unwrap().split(" ").collect();
@@ -945,7 +945,7 @@ async fn create_contest(
             &job_result_sender,
             &problem.main_solution_language,
             fs::read_to_string(
-                PathBuf::from(format!("./data/{}/{}", problem.id, problem.main_solution_path))
+                PathBuf::from(format!("/data/{}/{}", problem.id, problem.main_solution_path))
             )?,
             problem.test_count,
             format!("./{}/{}", problem.id, problem.test_pattern).into(),

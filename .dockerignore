@@ -1,4 +1,11 @@
 target/
 data/
+
+alvokanto/target/
+
 isolate/*.o
 isolate/isolate
+isolate/docbook-xsl.css
+isolate/isolate
+isolate/isolate.1
+isolate/isolate.1.html
