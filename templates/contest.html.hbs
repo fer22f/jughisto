@@ -1,99 +1,50 @@
-<!DOCTYPE html>
-<head>
-  <title>Juĝisto</title>
-  <meta charset="utf-8"/>
-  <link rel="stylesheet" href="/static/styles.css"/>
-  <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://unpkg.com/monaco-editor@0.21.2/min/vs/editor/editor.main.css"/>
-  <script src="https://unpkg.com/htmx.org@0.2.0"></script>
-<style>
-html, body {
-  flex-flow: row;
-}
+{{ #> base title="Competição" }}
+  <div id="contest">
+    <div id="breadcumb">
+      <a href="/">Início</a>
+      /
+      <a href="/contests/">Competições</a>
+      /
+      <a href="/contests/{{ contest.id }}">{{ contest.name }}</a>
+    </div>
 
-#editor, #submissions {
-  flex: 1;
-}
-</style>
-</head>
-<body hx-sse="connect:/submission_updates/">
-  <form id="submission" method="post" action="/submissions/">
-    <label for="contest_problem_id">
-      Problema:
-    </label>
-    <select id="contest_problem_id" name="contest_problem_id">
+    <div id="problems">
       {{ #each problems }}
-      <option value="{{ this.id }}">{{ this.label }} · {{ this.name }}</option>
+      <a href="/contests/{{ ../contest.id }}/{{ this.label }}" class="problem">
+        <div class="problem-info">
+          <div class="name">
+            {{ this.label }} · {{ this.name }}
+          </div>
+          <div class="extra">
+            {{this.time_limit}}s · {{ this.memory_limit_mib }}MiB
+          </div>
+        </div>
+        <div class="span"></div>
+        {{#if this.first_ac_submission_time}}
+          <div class="score accepted">
+            <div>
+              +{{#if this.failed_submissions}}{{this.failed_submissions}}{{/if}}
+            </div>
+            <div class="time">
+              {{this.first_ac_submission_time}}
+            </div>
+          </div>
+        {{else}}
+          {{#if this.failed_submissions}}
+            <div class="score wrong-answer">
+              <div>–{{ this.failed_submissions }}</div>
+            </div>
+          {{/if}}
+        {{/if}}
+      </a>
       {{ /each }}
-    </select>
-
-    <label for="language">
-      Linguagem:
-    </label>
-    <select id="language" name="language">
-      {{ #each languages }}
-      <option
-        {{ #if (eq ../language this.value) }}
-        selected
-        {{ /if }}
-        value="{{ this.value }}"
-      >
-        {{ this.name }}
-      </option>
-      {{ /each }}
-    </select>
-    <label>Código-fonte</label>
-    <div id="editor" style="border: 1px solid grey"></div>
-    <textarea id="source_text" name="source_text" style="display: none"></textarea>
-
-    <input type="file" id="source_file"/>
-    <button type="submit">
-      Submeter Solução
-    </button>
-  </form>
-
-  <div id="submissions">
-    Submissões
-    <div id="submissions-list" hx-get="/submissions/" hx-trigger="load, sse:update_submission">
-    {{> submissions }}
     </div>
   </div>
 
-  <script>
-    var require = { paths: { vs: 'https://unpkg.com/monaco-editor@0.21.2/min/vs' } };
-  </script>
-
-  <script src="https://unpkg.com/monaco-editor@0.21.2/min/vs/loader.js"></script>
-  <script src="https://unpkg.com/monaco-editor@0.21.2/min/vs/editor/editor.main.nls.js"></script>
-  <script src="https://unpkg.com/monaco-editor@0.21.2/min/vs/editor/editor.main.js"></script>
-
-  <script>
-    var editor = monaco.editor.create(document.getElementById('editor'), {
-      value: `
-#include <bits/stdc++.h>
-using namespace std;
-
-int main() {
-
-}
-      `.trim(),
-    });
-
-    const source_file = document.getElementById("source_file");
-    source_file.addEventListener("change", async function (e) {
-      editor.setValue(await source_file.files[0].text());
-      source_file.value = "";
-    });
-
-    const source_text = document.getElementById("source_text");
-    function setSourceText() { source_text.value = editor.getValue(); }
-    editor.onDidChangeModelContent(setSourceText);
-    setSourceText();
-
-    const language = document.getElementById("language");
-    function setLanguage(e) {
-      monaco.editor.setModelLanguage(editor.getModel(), language.value.split(".")[0]);
-    }
-    language.addEventListener("change", setLanguage);
-    setLanguage();
-  </script>
-</body>
+  <div id="submissions" hx-sse="connect:/submission_updates/">
+    Submissões
+    <div id="submissions-list" hx-get="/submissions/me/contests/{{ contest.id }}" hx-trigger="load, sse:update_submission">
+    {{> submissions }}
+    </div>
+  </div>
+{{ /base }}

@@ -80,9 +80,38 @@ pub fn complete_submission(
     Ok(())
 }
 
-pub fn get_submissions(connection: &PgConnection) -> QueryResult<Vec<(Submission, ContestProblem)>> {
+pub fn get_submissions_user(connection: &PgConnection, user_id: i32) -> QueryResult<Vec<(Submission, ContestProblem)>> {
     submission::table
+        .filter(submission::user_id.eq(user_id))
         .inner_join(contest_problems::table)
+        .order_by(submission::submission_instant.desc())
+        .load::<(Submission, ContestProblem)>(connection)
+}
+
+pub fn get_submissions_user_by_contest(
+    connection: &PgConnection,
+    user_id: i32,
+    contest_id: i32,
+) -> QueryResult<Vec<(Submission, ContestProblem)>> {
+    submission::table
+        .filter(submission::user_id.eq(user_id))
+        .inner_join(contest_problems::table)
+        .filter(contest_problems::contest_id.eq(contest_id))
+        .order_by(submission::submission_instant.desc())
+        .load::<(Submission, ContestProblem)>(connection)
+}
+
+pub fn get_submissions_user_by_contest_problem(
+    connection: &PgConnection,
+    user_id: i32,
+    contest_id: i32,
+    problem_label: &str,
+) -> QueryResult<Vec<(Submission, ContestProblem)>> {
+    submission::table
+        .filter(submission::user_id.eq(user_id))
+        .inner_join(contest_problems::table)
+        .filter(contest_problems::contest_id.eq(contest_id))
+        .filter(contest_problems::label.eq(problem_label))
         .order_by(submission::submission_instant.desc())
         .load::<(Submission, ContestProblem)>(connection)
 }

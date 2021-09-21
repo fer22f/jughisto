@@ -1,18 +1,5 @@
-<!DOCTYPE html>
-<head>
-  <title>Juĝisto · Entrar</title>
-  <meta charset="utf-8"/>
-  <link rel="stylesheet" href="/static/styles.css"/>
-  <style>
-html, body {
-  align-items: center;
-  justify-content: center;
-}
-  </style>
-</head>
-<body>
-  <div id="title">Juĝisto</div>
-  <form class="main" type="submit" method="post" action="/login" id="login-form">
+{{ #> base title="Entrar" }}
+  <form type="submit" method="post" action="/login" id="login-form">
     {{ #if flash_message }}
     <div id="login-info" class="info">
       {{ flash_message }}
@@ -30,4 +17,4 @@ html, body {
       Entrar
     </button>
   </form>
-</body>
+{{ /base }}

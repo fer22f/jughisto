@@ -1,0 +1,87 @@
+{{ #> base title="Competição" }}
+  <div id="problem">
+    <div id="breadcumb">
+      <a href="/">Início</a>
+      /
+      <a href="/contests/">Competições</a>
+      /
+      <a href="/contests/{{ contest.id }}">{{ contest.name }}</a>
+      /
+      <a href="/contests/{{ contest.id }}/{{ problem.label }}">{{ problem.label }} · {{ problem.name }}</a>
+    </div>
+
+    <div id="statement-submission">
+      <iframe src="/problems/{{problem.id}}/assets/problem.html" id="statement"></iframe>
+      <form id="submission" method="post" action="/submissions/">
+        <input type="hidden" name="contest_problem_id" value="{{ problem.id }}">
+        <label for="language">Linguagem</label>
+        <select id="language" name="language">
+          {{ #each languages }}
+          <option
+            {{ #if (eq ../language this.value) }}
+            selected
+            {{ /if }}
+            value="{{ this.value }}"
+          >
+            {{ this.name }}
+          </option>
+          {{ /each }}
+        </select>
+        <label>Código-fonte</label>
+        <div id="editor" style="border: 1px solid grey"></div>
+        <textarea id="source_text" name="source_text" style="display: none"></textarea>
+
+        <input type="file" id="source_file"/>
+        <button type="submit">
+          Submeter Solução
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div id="submissions" hx-sse="connect:/submission_updates/">
+    Submissões
+    <div id="submissions-list" hx-get="/submissions/me/contests/{{ contest.id }}/{{ problem.label }}" hx-trigger="load, sse:update_submission">
+    {{> submissions }}
+    </div>
+  </div>
+
+  <script>
+    var require = { paths: { vs: 'https://unpkg.com/monaco-editor@0.21.2/min/vs' } };
+  </script>
+
+  <script src="https://unpkg.com/monaco-editor@0.21.2/min/vs/loader.js"></script>
+  <script src="https://unpkg.com/monaco-editor@0.21.2/min/vs/editor/editor.main.nls.js"></script>
+  <script src="https://unpkg.com/monaco-editor@0.21.2/min/vs/editor/editor.main.js"></script>
+
+  <script>
+    var editor = monaco.editor.create(document.getElementById('editor'), {
+      value: `
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+
+}
+      `.trim(),
+    });
+
+    const source_file = document.getElementById("source_file");
+    source_file.addEventListener("change", async function (e) {
+      editor.setValue(await source_file.files[0].text());
+      source_file.value = "";
+    });
+
+    const source_text = document.getElementById("source_text");
+    function setSourceText() { source_text.value = editor.getValue(); }
+    editor.onDidChangeModelContent(setSourceText);
+    setSourceText();
+
+    const language = document.getElementById("language");
+    function setLanguage(e) {
+      monaco.editor.setModelLanguage(editor.getModel(), language.value.split(".")[0]);
+    }
+    language.addEventListener("change", setLanguage);
+    setLanguage();
+  </script>
+{{ /base }}

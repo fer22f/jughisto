@@ -114,7 +114,7 @@ fn run_cached(
                         memory_kib: compile_stats.memory_kib.unwrap(),
                         time_ms: compile_stats.time_ms.unwrap(),
                         time_wall_ms: compile_stats.time_wall_ms.unwrap(),
-                        error_output: read_to_string(compile_stats.stderr_path).unwrap(),
+                        error_output: read_to_string(compile_stats.stderr_path).unwrap_or("".into()),
                     }))
                 }
             }
@@ -162,7 +162,7 @@ fn run_cached(
         fs::copy(run_stats.stdout_path, root_data.join(stdout_path)).unwrap();
     }
 
-    let error_output = read_to_string(run_stats.stderr_path).unwrap();
+    let error_output = read_to_string(run_stats.stderr_path).unwrap_or("".into());
 
     fs_extra::dir::create(&isolate_box.path, true).unwrap();
 
@@ -288,7 +288,7 @@ fn judge(
                         memory_kib: compile_stats.memory_kib.unwrap(),
                         time_ms: compile_stats.time_ms.unwrap(),
                         time_wall_ms: compile_stats.time_wall_ms.unwrap(),
-                        error_output: read_to_string(compile_stats.stderr_path).unwrap(),
+                        error_output: read_to_string(compile_stats.stderr_path).unwrap_or("".into()),
                     }))
                 }
             }
@@ -354,7 +354,7 @@ fn judge(
                     memory_kib: compile_stats.memory_kib.unwrap(),
                     time_ms: compile_stats.time_ms.unwrap(),
                     time_wall_ms: compile_stats.time_wall_ms.unwrap(),
-                    error_output: read_to_string(compile_stats.stderr_path).unwrap(),
+                    error_output: read_to_string(compile_stats.stderr_path).unwrap_or("".into()),
                 }))
             }
         }
@@ -413,7 +413,7 @@ fn judge(
                 exit_code: None, ..
             } => true,
         } {
-            error_output = Some(read_to_string(&execute_stats.stderr_path).unwrap());
+            error_output = Some(read_to_string(&execute_stats.stderr_path).unwrap_or("".into()));
             failed_test = i;
             last_execute_stats = Some(execute_stats);
             break;
@@ -465,7 +465,7 @@ fn judge(
                 exit_code: None, ..
             } => true,
         } {
-            error_output = Some(read_to_string(checker_stats.stderr_path).unwrap());
+            error_output = Some(read_to_string(checker_stats.stderr_path).unwrap_or("".into()));
             failed_test = i;
             last_execute_stats = Some(execute_stats);
             break;

@@ -39,6 +39,11 @@ pub fn get_contests(connection: &PgConnection) -> QueryResult<Vec<Contest>> {
     contest::table.load(connection)
 }
 
+pub fn get_contest_by_id(connection: &PgConnection, id: i32) -> QueryResult<Contest> {
+    contest::table.filter(contest::id.eq(id))
+        .first(connection)
+}
+
 #[derive(Insertable)]
 #[table_name = "contest_problems"]
 pub struct NewContestProblems {

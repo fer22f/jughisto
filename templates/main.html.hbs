@@ -1,0 +1,9 @@
+{{ #> base title="Início" }}
+  <div id="contests">
+  {{ #each contests }}
+    <a href="/contests/{{ this.id }}" class="contest">
+      {{ this.name }} · {{ this.start_instant }} - {{ this.end_instant }}
+    </a>
+  {{ /each }}
+  </div>
+{{ /base }}

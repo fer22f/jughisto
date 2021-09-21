@@ -148,13 +148,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(handlebars_ref.clone())
             .service(get_login)
             .service(post_login)
-            .service(manage_contests)
+            .service(post_logout)
+            .service(get_main)
+            .service(get_contests)
             .service(get_contest_by_id)
+            .service(get_contest_problem_by_id_label)
             .service(get_submissions)
+            .service(get_submissions_by_contest_id)
+            .service(get_submissions_by_contest_id_problem_label)
             .service(create_submission)
             .service(create_contest)
             .service(submission_updates)
             .service(Files::new("/static/", "./static/"))
+            .service(get_problem_by_id_assets)
     });
 
     server = if let Some(l) = listenfd
@@ -263,6 +269,8 @@ enum GetError {
     Diesel(#[from] diesel::result::Error),
     #[error("couldn't get connection from pool")]
     R2d2Pool(#[from] r2d2::Error),
+    #[error("couldn't find file")]
+    Io(#[from] std::io::Error),
 }
 
 impl actix_web::error::ResponseError for GetError {
@@ -273,6 +281,7 @@ impl actix_web::error::ResponseError for GetError {
     fn status_code(&self) -> StatusCode {
         match *self {
             GetError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            GetError::Io(_) => StatusCode::NOT_FOUND,
             GetError::Render(_)
             | GetError::Actix(_)
             | GetError::Diesel(_)
@@ -294,6 +303,22 @@ async fn get_login(
             "flash_message": flash.map_or("".into(), |f| f.into_inner())
         }),
     )?))
+}
+
+use actix_files::NamedFile;
+
+#[get("/problems/{id}/assets/{filename}")]
+async fn get_problem_by_id_assets(
+    identity: Identity,
+    pool: web::Data<DbPool>,
+    path: web::Path<(i32, String,)>,
+) -> Result<NamedFile, GetError> {
+    let logged_user = require_identity(identity)?;
+    let path = path.into_inner();
+    let connection = pool.get()?;
+    let problem = problem::get_problem_by_contest_id_metadata(&connection, path.0)?;
+    let file_path = PathBuf::from("/data/").join(problem.id).join("statements/.html/portuguese/").join(path.1);
+    Ok(NamedFile::open(file_path)?)
 }
 
 use actix_web::Responder;
@@ -345,10 +370,16 @@ struct LoginForm {
 use models::problem;
 use models::problem::ProblemByContest;
 
-fn get_identity(identity: Identity) -> Result<LoggedUser, UnauthorizedError> {
-    let identity = identity.identity().ok_or(UnauthorizedError {})?;
-    serde_json::from_str(&identity).map_err(|_| UnauthorizedError {})
+fn get_identity(identity: Identity) -> Option<LoggedUser> {
+    let identity = identity.identity();
+    identity.and_then(|identity| serde_json::from_str(&identity).ok())
 }
+
+fn require_identity(identity: Identity) -> Result<LoggedUser, UnauthorizedError> {
+    get_identity(identity).ok_or(UnauthorizedError {})
+}
+
+use contest::Contest;
 
 #[get("/contests/{id}")]
 async fn get_contest_by_id(
@@ -360,7 +391,69 @@ async fn get_contest_by_id(
     path: web::Path<(i32,)>,
     tz: web::Data<Tz>,
 ) -> GetResult {
-    get_identity(identity)?;
+    let logged_user = require_identity(identity)?;
+
+    #[derive(Serialize)]
+    struct FormattedProblemByContestWithScore {
+        pub first_ac_submission_time: String,
+        pub failed_submissions: i32,
+        pub id: i32,
+        pub name: String,
+        pub label: String,
+        pub memory_limit_mib: i32,
+        pub time_limit: String,
+    }
+
+    #[derive(Serialize)]
+    struct ContestContext {
+        contest: FormattedContest,
+        problems: Vec<FormattedProblemByContestWithScore>,
+        submissions: Vec<FormattedSubmission>,
+        logged_user: LoggedUser,
+    }
+
+    let path = path.into_inner();
+
+    let connection = pool.get()?;
+    let contest = contest::get_contest_by_id(&connection, path.0)?;
+    let problems = problem::get_problems_by_contest_id_with_score(&connection, path.0)?;
+    let submissions = submission::get_submissions_user_by_contest(&connection, logged_user.id, path.0)?;
+
+    Ok(HttpResponse::Ok().body(
+        hb.render(
+            "contest",
+            &ContestContext {
+                contest: get_formatted_contest(&tz, &contest),
+                problems: problems.iter().map(|p| FormattedProblemByContestWithScore {
+                    first_ac_submission_time: p.first_ac_submission_instant.map(|t| format_utc_date_time(&tz, t)).unwrap_or("".into()),
+                    failed_submissions: p.failed_submissions,
+                    id: p.id,
+                    name: p.name.clone(),
+                    label: p.label.clone(),
+                    memory_limit_mib: p.memory_limit_bytes / 1_024 / 1_024,
+                    time_limit: format!("{}", f64::from(p.time_limit_ms) / 1000.0).replacen(".", ",", 1),
+                }).collect(),
+                logged_user,
+                submissions: submissions
+                    .iter()
+                    .map(|(s, c)| format_submission(&tz, s, c))
+                    .collect(),
+            },
+        )?,
+    ))
+}
+
+#[get("/contests/{id}/{label}")]
+async fn get_contest_problem_by_id_label(
+    identity: Identity,
+    pool: web::Data<DbPool>,
+    hb: web::Data<Handlebars<'_>>,
+    languages: web::Data<Arc<DashMap<String, Language>>>,
+    session: Session,
+    path: web::Path<(i32,String)>,
+    tz: web::Data<Tz>,
+) -> GetResult {
+    let logged_user = require_identity(identity)?;
 
     #[derive(Serialize, Debug)]
     struct LanguageContext {
@@ -370,11 +463,14 @@ async fn get_contest_by_id(
     }
 
     #[derive(Serialize)]
-    struct ContestContext {
+    struct ContestProblemContext {
         languages: Vec<LanguageContext>,
         language: Option<String>,
+        contest: FormattedContest,
         problems: Vec<ProblemByContest>,
+        problem: ProblemByContest,
         submissions: Vec<FormattedSubmission>,
+        logged_user: LoggedUser,
     }
 
     let mut languages = languages
@@ -388,16 +484,22 @@ async fn get_contest_by_id(
     languages.sort_by(|a, b| a.order.cmp(&b.order));
 
     let connection = pool.get()?;
-    let problems = problem::get_problems_by_contest_id(&connection, path.into_inner().0)?;
-    let submissions = submission::get_submissions(&connection)?;
+    let path = path.into_inner();
+    let contest = get_formatted_contest(&tz, &contest::get_contest_by_id(&connection, path.0)?);
+    let problems = problem::get_problems_by_contest_id(&connection, path.0)?;
+    let problem = problem::get_problem_by_contest_id_label(&connection, path.0, &path.1)?;
+    let submissions = submission::get_submissions_user_by_contest_problem(&connection, logged_user.id, path.0, &path.1)?;
 
     Ok(HttpResponse::Ok().body(
         hb.render(
-            "contest",
-            &ContestContext {
+            "contest_problem",
+            &ContestProblemContext {
+                contest,
                 languages,
                 problems,
+                problem,
                 language: session.get("language")?,
+                logged_user,
                 submissions: submissions
                     .iter()
                     .map(|(s, c)| format_submission(&tz, s, c))
@@ -412,6 +514,14 @@ struct LoggedUser {
     id: i32,
     name: String,
     is_admin: bool,
+}
+
+#[post("/logout")]
+async fn post_logout(
+    identity: Identity,
+) -> PostResult {
+    identity.forget();
+    Ok(flash::Response::with_redirect("".into(), "/"))
 }
 
 #[post("/login")]
@@ -438,12 +548,12 @@ async fn post_login(
         PasswordMatched::PasswordDoesntMatch => {
             Err(PostError::Validation("Senha incorreta".into()))
         }
-        PasswordMatched::PasswordMatches(user) => {
+        PasswordMatched::PasswordMatches(logged_user) => {
             identity.remember(
                 serde_json::to_string(&LoggedUser {
-                    id: user.id,
-                    name: (&user.name).into(),
-                    is_admin: user.is_admin,
+                    id: logged_user.id,
+                    name: (&logged_user.name).into(),
+                    is_admin: logged_user.is_admin,
                 })
                 .map_err(|_| PostError::Custom("Usuário no banco de dados inconsistente".into()))?,
             );
@@ -498,14 +608,14 @@ fn format_submission(
     }
 }
 
-#[get("/submissions/")]
+#[get("/submissions/me/")]
 async fn get_submissions(
     identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
     tz: web::Data<Tz>,
 ) -> GetResult {
-    get_identity(identity)?;
+    let logged_user = require_identity(identity)?;
     let connection = pool.get()?;
 
     #[derive(Serialize)]
@@ -513,7 +623,71 @@ async fn get_submissions(
         submissions: Vec<FormattedSubmission>,
     }
 
-    let submissions = submission::get_submissions(&connection)?;
+    let submissions = submission::get_submissions_user(&connection, logged_user.id)?;
+
+    Ok(HttpResponse::Ok().body(
+        hb.render(
+            "submissions",
+            &SubmissionsContext {
+                submissions: submissions
+                    .iter()
+                    .map(|(s, c)| format_submission(&tz, s, c))
+                    .collect(),
+            },
+        )?,
+    ))
+}
+
+#[get("/submissions/me/contests/{id}")]
+async fn get_submissions_by_contest_id(
+    identity: Identity,
+    pool: web::Data<DbPool>,
+    hb: web::Data<Handlebars<'_>>,
+    path: web::Path<(i32,)>,
+    tz: web::Data<Tz>,
+) -> GetResult {
+    let logged_user = require_identity(identity)?;
+    let connection = pool.get()?;
+
+    #[derive(Serialize)]
+    struct SubmissionsContext {
+        submissions: Vec<FormattedSubmission>,
+    }
+
+    let path = path.into_inner();
+    let submissions = submission::get_submissions_user_by_contest(&connection, logged_user.id, path.0)?;
+
+    Ok(HttpResponse::Ok().body(
+        hb.render(
+            "submissions",
+            &SubmissionsContext {
+                submissions: submissions
+                    .iter()
+                    .map(|(s, c)| format_submission(&tz, s, c))
+                    .collect(),
+            },
+        )?,
+    ))
+}
+
+#[get("/submissions/me/contests/{id}/{label}")]
+async fn get_submissions_by_contest_id_problem_label(
+    identity: Identity,
+    pool: web::Data<DbPool>,
+    hb: web::Data<Handlebars<'_>>,
+    path: web::Path<(i32, String)>,
+    tz: web::Data<Tz>,
+) -> GetResult {
+    let logged_user = require_identity(identity)?;
+    let connection = pool.get()?;
+
+    #[derive(Serialize)]
+    struct SubmissionsContext {
+        submissions: Vec<FormattedSubmission>,
+    }
+
+    let path = path.into_inner();
+    let submissions = submission::get_submissions_user_by_contest_problem(&connection, logged_user.id, path.0, &path.1)?;
 
     Ok(HttpResponse::Ok().body(
         hb.render(
@@ -564,7 +738,7 @@ async fn create_submission(
     session: Session,
     request: HttpRequest,
 ) -> PostResult {
-    let identity = get_identity(identity)?;
+    let identity = require_identity(identity)?;
     let connection = pool.get()?;
 
     languages
@@ -578,7 +752,7 @@ async fn create_submission(
             uuid: uuid.to_string(),
             source_text: (&form.source_text).into(),
             language: (&form.language).into(),
-            submission_instant: Local::now().naive_local(),
+            submission_instant: Local::now().naive_utc(),
             contest_problem_id: form.contest_problem_id,
             user_id: identity.id,
         },
@@ -607,28 +781,73 @@ async fn create_submission(
     redirect_to_referer(format!("Submetido {} com sucesso!", uuid), &request)
 }
 
-#[get("/contests/")]
-async fn manage_contests(
+#[derive(Serialize)]
+struct FormattedContest {
+    pub id: i32,
+    pub name: String,
+    pub start_instant: Option<String>,
+    pub end_instant: Option<String>,
+    pub creation_instant: String,
+}
+
+fn get_formatted_contest(tz: &Tz, contest: &Contest) -> FormattedContest {
+    FormattedContest {
+        id: contest.id,
+        name: contest.name.clone(),
+        start_instant: contest.start_instant.map(|i| format_utc_date_time(&tz, i)),
+        end_instant: contest.end_instant.map(|i| format_utc_date_time(&tz, i)),
+        creation_instant: format_utc_date_time(&tz, contest.creation_instant),
+    }
+}
+
+fn get_formatted_contests(pool: &DbPool, tz: &Tz) -> Result<Vec<FormattedContest>, GetError> {
+    let connection = pool.get()?;
+    let contests = contest::get_contests(&connection)?;
+
+    Ok(contests
+        .iter()
+        .map(|c| get_formatted_contest(tz, c))
+    .collect())
+}
+
+#[get("/")]
+async fn get_main(
     identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
     tz: web::Data<Tz>,
 ) -> GetResult {
-    get_identity(identity)?;
-    let connection = pool.get()?;
-    let contests = contest::get_contests(&connection)?;
+    let logged_user = get_identity(identity);
 
     #[derive(Serialize)]
-    struct FormattedContest {
-        pub id: i32,
-        pub name: String,
-        pub start_instant: Option<String>,
-        pub end_instant: Option<String>,
-        pub creation_instant: String,
+    struct MainContext {
+        logged_user: Option<LoggedUser>,
+        contests: Vec<FormattedContest>
     }
+
+    Ok(HttpResponse::Ok().body(
+        hb.render(
+            "main",
+            &MainContext {
+                logged_user,
+                contests: get_formatted_contests(&pool, &tz)?,
+            },
+        )?,
+    ))
+}
+
+#[get("/contests/")]
+async fn get_contests(
+    identity: Identity,
+    pool: web::Data<DbPool>,
+    hb: web::Data<Handlebars<'_>>,
+    tz: web::Data<Tz>,
+) -> GetResult {
+    let logged_user = require_identity(identity)?;
 
     #[derive(Serialize)]
     struct ContestsContext {
+        logged_user: LoggedUser,
         contests: Vec<FormattedContest>,
     }
 
@@ -636,16 +855,8 @@ async fn manage_contests(
         hb.render(
             "contests",
             &ContestsContext {
-                contests: contests
-                    .iter()
-                    .map(|c| FormattedContest {
-                        id: c.id,
-                        name: c.name.clone(),
-                        start_instant: c.start_instant.map(|i| format_utc_date_time(&tz, i)),
-                        end_instant: c.end_instant.map(|i| format_utc_date_time(&tz, i)),
-                        creation_instant: format_utc_date_time(&tz, c.creation_instant),
-                    })
-                    .collect(),
+                logged_user,
+                contests: get_formatted_contests(&pool, &tz)?,
             },
         )?,
     ))
@@ -672,7 +883,7 @@ async fn create_contest(
     job_sender: web::Data<Sender<Job>>,
     job_result_sender: web::Data<broadcast::Sender<JobResult>>,
 ) -> PostResult {
-    let identity = get_identity(identity)?;
+    let identity = require_identity(identity)?;
 
     #[derive(Debug)]
     struct Form {
