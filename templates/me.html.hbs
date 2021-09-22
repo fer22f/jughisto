@@ -1,0 +1,40 @@
+{{#> base title="Eu"}}
+  <form id="change-password" method="post" action="/me/password">
+   <label for="old_password">
+      Senha antiga
+    </label>
+    <input type="password" name="old_password">
+    <label for="new_password">
+      Senha nova
+    </label>
+    <input type="password" name="new_password">
+    <label for="new_password_repeat">
+      Senha nova (de novo)
+    </label>
+    <input type="password" name="new_password_repeat">
+    <button type="submit">
+      Mudar senha
+    </button>
+  </form>
+
+  {{#if logged_user.is_admin}}
+    <form id="create-user" method="post" action="/users/">
+      <label for="name">
+        Nome
+      </label>
+      <input type="text" name="name">
+      <label for="password">
+        Senha
+      </label>
+      <input type="password" name="password">
+      <label for="is_admin">
+        Administrador?
+      </label>
+      <input type="hidden" value="false" name="is_admin">
+      <input type="checkbox" value="true" name="is_admin">
+      <button type="submit">
+        Criar usuário
+      </button>
+    </form>
+  {{/if}}
+{{/base}}

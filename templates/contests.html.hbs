@@ -1,61 +1,63 @@
-<!DOCTYPE html>
-<head>
-  <title>Juĝisto</title>
-  <meta charset="utf-8"/>
-  <link rel="stylesheet" href="/static/styles.css"/>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-</head>
-<body>
-  <table>
-    <thead>
-      <tr>
-        <th>Nome</th>
-        <th class="right">Momento do Início</th>
-        <th class="right">Momento do Final</th>
-        <th class="right">Momento da Criação</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{ #each contests }}
-      <tr>
-        <td><a href="/contests/{{ this.id }}">{{ this.name }}</a></td>
-        <td class="right"><a href="/contests/{{ this.id }}">{{ this.start_instant }}</a></td>
-        <td class="right"><a href="/contests/{{ this.id }}">{{ this.end_instant }}</a></td>
-        <td class="right"><a href="/contests/{{ this.id }}">{{ this.creation_instant }}</a></td>
-      </tr>
-      {{ /each }}
-    </tbody>
-  </table>
+{{#> base title="Competições"}}
+  <div id="contests">
+    <div id="breadcumb">
+      <a href="/">Início</a>
+      /
+      <a href="/contests/">Competições</a>
+    </div>
 
-  <form class="main" enctype="multipart/form-data" method="post" action="/contests/">
-    <label for="name">
-      Nome
-    </label>
-    <input name="name" type="text" />
+    <table>
+      <thead>
+        <tr>
+          <th>Nome</th>
+          <th class="right">Momento do Início</th>
+          <th class="right">Momento do Final</th>
+          <th class="right">Momento da Criação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ #each contests }}
+        <tr>
+          <td><a href="/contests/{{ this.id }}">{{ this.name }}</a></td>
+          <td class="right"><a href="/contests/{{ this.id }}">{{ this.start_instant }}</a></td>
+          <td class="right"><a href="/contests/{{ this.id }}">{{ this.end_instant }}</a></td>
+          <td class="right"><a href="/contests/{{ this.id }}">{{ this.creation_instant }}</a></td>
+        </tr>
+        {{ /each }}
+      </tbody>
+    </table>
+  </div>
 
-    <label for="start_instant">
-      Momento do Início
-    </label>
-    <input id="start_instant" type="text" name="start_instant"/>
+  {{#if logged_user.is_admin }}
+    <form id="create-contest-form" enctype="multipart/form-data" method="post" action="/contests/">
+      <label for="name">
+        Nome
+      </label>
+      <input name="name" type="text" />
 
-    <label for="end_time">
-      Momento do Final
-    </label>
-    <input id="end_instant" type="text" name="end_instant"/>
+      <label for="start_instant">
+        Momento do Início
+      </label>
+      <input id="start_instant" type="text" name="start_instant"/>
 
-    <label for="polygon_zip">
-      Zip do Polygon
-    </label>
-    <input name="polygon_zip" type="file"/>
+      <label for="end_time">
+        Momento do Final
+      </label>
+      <input id="end_instant" type="text" name="end_instant"/>
 
-    <button type="submit">
-      Criar Contest
-    </button>
-  </form>
+      <label for="polygon_zip">
+        Zip do Polygon
+      </label>
+      <input name="polygon_zip" type="file"/>
 
-  <script>
-    flatpickr("#start_instant", { enableTime: true, enableSeconds: true, time_24hr: true });
-    flatpickr("#end_instant", { enableTime: true, enableSeconds: true, time_24hr: true });
-  </script>
-</body>
+      <button type="submit">
+        Criar Contest
+      </button>
+    </form>
+
+    <script>
+      flatpickr("#start_instant", { enableTime: true, enableSeconds: true, time_24hr: true });
+      flatpickr("#end_instant", { enableTime: true, enableSeconds: true, time_24hr: true });
+    </script>
+  {{/if}}
+{{/base}}

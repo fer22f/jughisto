@@ -120,7 +120,6 @@ where
                 res.extensions_mut().insert(FlashCookieValue(json));
             }
         }
-        println!("res: {:?}", res);
         res
     }
 }

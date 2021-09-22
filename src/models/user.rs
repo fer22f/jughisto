@@ -10,10 +10,8 @@ use crate::schema::user;
 
 #[derive(Queryable)]
 struct UserWithHashedPassword {
-    pub id: i32,
     pub name: String,
     pub hashed_password: String,
-    pub is_admin: bool,
 }
 
 #[derive(Queryable, Serialize)]
@@ -70,7 +68,7 @@ pub fn check_matching_password(
 ) -> Result<PasswordMatched, UserHashingError> {
     match user::table
         .filter(user::name.eq(name))
-        .select((user::id, user::name, user::hashed_password, user::is_admin))
+        .select((user::name, user::hashed_password))
         .first::<UserWithHashedPassword>(connection)
         .optional()?
     {
@@ -82,6 +80,36 @@ pub fn check_matching_password(
             },
         ),
         None => Ok(PasswordMatched::UserDoesntExist),
+    }
+}
+
+pub fn change_password(
+    connection: &PgConnection,
+    id: i32,
+    old_password: &str,
+    new_password: &str,
+) -> Result<PasswordMatched, UserHashingError> {
+    let user = user::table
+        .filter(user::id.eq(id))
+        .select((user::name, user::hashed_password))
+        .first::<UserWithHashedPassword>(connection)?;
+
+    if argon2::verify_encoded(&user.hashed_password, old_password.as_bytes())? {
+        let config = argon2::Config::default();
+        let hashed_password = argon2::hash_encoded(
+            new_password.as_bytes(),
+            env::var("SECRET_HASH_KEY")
+                .expect("SECRET_HASH_KEY must be set")
+                .as_bytes(),
+            &config,
+        )?;
+        diesel::update(user::table)
+            .filter(user::id.eq(id))
+            .set(user::hashed_password.eq(hashed_password))
+            .execute(connection)?;
+        Ok(PasswordMatched::PasswordMatches(get_user_by_name(&connection, &user.name)?))
+    } else {
+        Ok(PasswordMatched::PasswordDoesntMatch)
     }
 }
 

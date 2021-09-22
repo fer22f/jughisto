@@ -47,10 +47,11 @@ main {
   text-decoration: none;
   color: black;
   display: flex;
+  height: 56px;
 }
 
-.problem {
-  height: 56px;
+.contest-info {
+  padding: 8px;
 }
 
 .score {
@@ -80,22 +81,26 @@ main {
   color: #555;
 }
 
-#login-form {
+form {
   display: flex;
   flex-flow: column;
 }
 
-#login-form > * {
-  max-width: 500px;
+form > * {
   margin: 8px;
 }
 
-#login-form > button {
+#login-form {
+  max-width: 500px;
+}
+
+form > button {
   padding: 4px;
 }
 
 #logout-form {
    display: inline;
+   padding: 0;
 }
     
 header {
@@ -301,11 +306,13 @@ th.right, td.right {
 }
 
 tr {
-  height: 16px;
+  max-height: 32px;
+  min-height: 32px;
 }
 
 td {
-  height: 16px;
+  max-height: 32px;
+  min-height: 32px;
   border-top: 1px solid #ddd;
   border-bottom: 1px solid #ddd;
   padding: 0;
@@ -313,7 +320,8 @@ td {
 
 table a {
   display: block;
-  height: 16px;
+  max-height: 32px;
+  min-height: 32px;
   padding: 8px;
   text-decoration: none;
 }

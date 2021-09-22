@@ -4,7 +4,6 @@ extern crate diesel;
 
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 use actix_files::Files;
 use actix_identity::Identity;
@@ -14,7 +13,6 @@ use diesel::pg::PgConnection;
 use std::env;
 use std::fs::File;
 use uuid::Uuid;
-
 use actix_identity::{CookieIdentityPolicy, IdentityService};
 use actix_session::{CookieSession, Session};
 use actix_web::HttpResponse;
@@ -147,6 +145,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(broadcaster.clone())
             .app_data(handlebars_ref.clone())
             .service(get_login)
+            .service(get_me)
+            .service(change_password)
             .service(post_login)
             .service(post_logout)
             .service(get_main)
@@ -158,6 +158,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(get_submissions_by_contest_id_problem_label)
             .service(create_submission)
             .service(create_contest)
+            .service(create_user)
             .service(submission_updates)
             .service(Files::new("/static/", "./static/"))
             .service(get_problem_by_id_assets)
@@ -210,6 +211,8 @@ enum PostError {
     Validation(String),
     #[error("couldn't get connection from pool")]
     ConnectionPool(#[from] r2d2::Error),
+    #[error("couldn't hash")]
+    UserHashing(#[from] user::UserHashingError),
     #[error(transparent)]
     Web(#[from] actix_web::Error),
     #[error(transparent)]
@@ -250,6 +253,7 @@ impl actix_web::error::ResponseError for PostError {
             | PostError::Queue(_)
             | PostError::Database(_)
             | PostError::Io(_)
+            | PostError::UserHashing(_)
             | PostError::Zip(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -290,19 +294,52 @@ impl actix_web::error::ResponseError for GetError {
     }
 }
 
-type GetResult = Result<HttpResponse, GetError>;
+type GetResult = Result<flash::Response<HttpResponse, String>, GetError>;
 
 #[get("/login")]
 async fn get_login(
     flash: Option<flash::Message<String>>,
+    identity: Identity,
     hb: web::Data<Handlebars<'_>>,
 ) -> GetResult {
-    Ok(HttpResponse::Ok().body(hb.render(
+    let logged_user = get_identity(identity);
+    #[derive(Serialize)]
+    struct LoginContext {
+        logged_user: Option<LoggedUser>,
+        flash_message: String
+    }
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(hb.render(
         "login",
-        &json!({
-            "flash_message": flash.map_or("".into(), |f| f.into_inner())
-        }),
-    )?))
+        &LoginContext {
+            logged_user,
+            flash_message: flash.map_or("".into(), |f| f.into_inner())
+        },
+    )?)))
+}
+
+#[get("/me")]
+async fn get_me(
+    flash: Option<flash::Message<String>>,
+    identity: Identity,
+    hb: web::Data<Handlebars<'_>>,
+) -> GetResult {
+    let logged_user = require_identity(identity)?;
+    #[derive(Serialize)]
+    struct MeContext {
+        logged_user: LoggedUser,
+        flash_message: String
+    }
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(hb.render(
+        "me",
+        &MeContext {
+            logged_user,
+            flash_message: flash.map_or("".into(), |f| f.into_inner())
+        },
+    )?)))
 }
 
 use actix_files::NamedFile;
@@ -313,7 +350,7 @@ async fn get_problem_by_id_assets(
     pool: web::Data<DbPool>,
     path: web::Path<(i32, String,)>,
 ) -> Result<NamedFile, GetError> {
-    let logged_user = require_identity(identity)?;
+    require_identity(identity)?;
     let path = path.into_inner();
     let connection = pool.get()?;
     let problem = problem::get_problem_by_contest_id_metadata(&connection, path.0)?;
@@ -383,13 +420,13 @@ use contest::Contest;
 
 #[get("/contests/{id}")]
 async fn get_contest_by_id(
+    flash: Option<flash::Message<String>>,
     identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
-    languages: web::Data<Arc<DashMap<String, Language>>>,
-    session: Session,
     path: web::Path<(i32,)>,
     tz: web::Data<Tz>,
+    request: HttpRequest,
 ) -> GetResult {
     let logged_user = require_identity(identity)?;
 
@@ -410,16 +447,24 @@ async fn get_contest_by_id(
         problems: Vec<FormattedProblemByContestWithScore>,
         submissions: Vec<FormattedSubmission>,
         logged_user: LoggedUser,
+        flash_message: String,
     }
 
     let path = path.into_inner();
 
     let connection = pool.get()?;
     let contest = contest::get_contest_by_id(&connection, path.0)?;
-    let problems = problem::get_problems_by_contest_id_with_score(&connection, path.0)?;
+
+    if contest.start_instant.map(|s| s > Local::now().naive_utc()).unwrap_or(false) && !logged_user.is_admin {
+        return Ok(redirect_to_referer("Essa competição ainda não começou".into(), &request));
+    }
+
+    let problems = problem::get_problems_user_by_contest_id_with_score(&connection, logged_user.id, path.0)?;
     let submissions = submission::get_submissions_user_by_contest(&connection, logged_user.id, path.0)?;
 
-    Ok(HttpResponse::Ok().body(
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(
         hb.render(
             "contest",
             &ContestContext {
@@ -434,17 +479,19 @@ async fn get_contest_by_id(
                     time_limit: format!("{}", f64::from(p.time_limit_ms) / 1000.0).replacen(".", ",", 1),
                 }).collect(),
                 logged_user,
+                flash_message: flash.map_or("".into(), |f| f.into_inner()),
                 submissions: submissions
                     .iter()
                     .map(|(s, c)| format_submission(&tz, s, c))
                     .collect(),
             },
         )?,
-    ))
+    )))
 }
 
 #[get("/contests/{id}/{label}")]
 async fn get_contest_problem_by_id_label(
+    flash: Option<flash::Message<String>>,
     identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
@@ -470,6 +517,7 @@ async fn get_contest_problem_by_id_label(
         problems: Vec<ProblemByContest>,
         problem: ProblemByContest,
         submissions: Vec<FormattedSubmission>,
+        flash_message: String,
         logged_user: LoggedUser,
     }
 
@@ -490,7 +538,9 @@ async fn get_contest_problem_by_id_label(
     let problem = problem::get_problem_by_contest_id_label(&connection, path.0, &path.1)?;
     let submissions = submission::get_submissions_user_by_contest_problem(&connection, logged_user.id, path.0, &path.1)?;
 
-    Ok(HttpResponse::Ok().body(
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(
         hb.render(
             "contest_problem",
             &ContestProblemContext {
@@ -498,6 +548,7 @@ async fn get_contest_problem_by_id_label(
                 languages,
                 problems,
                 problem,
+                flash_message: flash.map_or("".into(), |f| f.into_inner()),
                 language: session.get("language")?,
                 logged_user,
                 submissions: submissions
@@ -506,7 +557,7 @@ async fn get_contest_problem_by_id_label(
                     .collect(),
             },
         )?,
-    ))
+    )))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -625,7 +676,9 @@ async fn get_submissions(
 
     let submissions = submission::get_submissions_user(&connection, logged_user.id)?;
 
-    Ok(HttpResponse::Ok().body(
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(
         hb.render(
             "submissions",
             &SubmissionsContext {
@@ -635,7 +688,7 @@ async fn get_submissions(
                     .collect(),
             },
         )?,
-    ))
+    )))
 }
 
 #[get("/submissions/me/contests/{id}")]
@@ -657,7 +710,9 @@ async fn get_submissions_by_contest_id(
     let path = path.into_inner();
     let submissions = submission::get_submissions_user_by_contest(&connection, logged_user.id, path.0)?;
 
-    Ok(HttpResponse::Ok().body(
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(
         hb.render(
             "submissions",
             &SubmissionsContext {
@@ -667,7 +722,7 @@ async fn get_submissions_by_contest_id(
                     .collect(),
             },
         )?,
-    ))
+    )))
 }
 
 #[get("/submissions/me/contests/{id}/{label}")]
@@ -689,7 +744,9 @@ async fn get_submissions_by_contest_id_problem_label(
     let path = path.into_inner();
     let submissions = submission::get_submissions_user_by_contest_problem(&connection, logged_user.id, path.0, &path.1)?;
 
-    Ok(HttpResponse::Ok().body(
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(
         hb.render(
             "submissions",
             &SubmissionsContext {
@@ -699,7 +756,7 @@ async fn get_submissions_by_contest_id_problem_label(
                     .collect(),
             },
         )?,
-    ))
+    )))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -715,17 +772,72 @@ use std::collections::HashMap;
 
 use actix_web::HttpRequest;
 
-fn redirect_to_referer(message: String, request: &HttpRequest) -> PostResult {
+fn redirect_to_referer(message: String, request: &HttpRequest) -> flash::Response<HttpResponse, String> {
     let referer = request
         .headers()
         .get("Referer")
-        .ok_or(PostError::Validation(
-            "Cabeçalho Referer inexistente".into(),
-        ))?;
-    let referer_str = referer
-        .to_str()
-        .map_err(|_| PostError::Validation("Cabeçalho Referer inválido".into()))?;
-    Ok(flash::Response::with_redirect(message, referer_str))
+        .and_then(|h| h.to_str().ok()).unwrap_or("/".into());
+    flash::Response::with_redirect(message, referer)
+}
+
+#[derive(Serialize, Deserialize)]
+struct ChangePasswordForm {
+    old_password: String,
+    new_password: String,
+    new_password_repeat: String,
+}
+
+#[post("/me/password")]
+async fn change_password(
+    identity: Identity,
+    form: web::Form<ChangePasswordForm>,
+    pool: web::Data<DbPool>,
+    request: HttpRequest,
+) -> PostResult {
+    let identity = require_identity(identity)?;
+    if form.new_password != form.new_password_repeat {
+      return Err(PostError::Validation("Senhas são diferentes".into()));
+    }
+
+    let connection = pool.get()?;
+
+    use user::PasswordMatched;
+    match user::change_password(&connection, identity.id, &form.old_password, &form.new_password)? {
+        PasswordMatched::PasswordMatches(_) => Ok(redirect_to_referer("Senha alterada com sucesso".into(), &request)),
+        _ => Ok(redirect_to_referer("Senha antiga incorreta".into(), &request))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct CreateUserForm {
+    name: String,
+    password: String,
+    is_admin: bool,
+}
+
+#[post("/users/")]
+async fn create_user(
+    identity: Identity,
+    pool: web::Data<DbPool>,
+    form: web::Form<CreateUserForm>,
+    request: HttpRequest,
+) -> PostResult {
+    let identity = require_identity(identity)?;
+    if !identity.is_admin {
+        return Err(PostError::Unauthorized(UnauthorizedError {}));
+    }
+
+    let connection = pool.get()?;
+
+    user::insert_new_user(&connection, user::NewUser {
+        name: &form.name,
+        password: &form.password,
+        is_admin: form.is_admin,
+        creation_instant: Local::now().naive_utc(),
+        creation_user_id: Some(identity.id)
+    })?;
+
+    Ok(redirect_to_referer("Usuário criado com sucesso".into(), &request))
 }
 
 #[post("/submissions/")]
@@ -778,7 +890,7 @@ async fn create_submission(
 
     session.insert("language", &form.language)?;
 
-    redirect_to_referer(format!("Submetido {} com sucesso!", uuid), &request)
+    Ok(redirect_to_referer(format!("Submetido {} com sucesso!", uuid), &request))
 }
 
 #[derive(Serialize)]
@@ -812,6 +924,7 @@ fn get_formatted_contests(pool: &DbPool, tz: &Tz) -> Result<Vec<FormattedContest
 
 #[get("/")]
 async fn get_main(
+    flash: Option<flash::Message<String>>,
     identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
@@ -822,22 +935,27 @@ async fn get_main(
     #[derive(Serialize)]
     struct MainContext {
         logged_user: Option<LoggedUser>,
+        flash_message: String,
         contests: Vec<FormattedContest>
     }
 
-    Ok(HttpResponse::Ok().body(
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(
         hb.render(
             "main",
             &MainContext {
+                flash_message: flash.map_or("".into(), |f| f.into_inner()),
                 logged_user,
                 contests: get_formatted_contests(&pool, &tz)?,
             },
         )?,
-    ))
+    )))
 }
 
 #[get("/contests/")]
 async fn get_contests(
+    flash: Option<flash::Message<String>>,
     identity: Identity,
     pool: web::Data<DbPool>,
     hb: web::Data<Handlebars<'_>>,
@@ -848,18 +966,22 @@ async fn get_contests(
     #[derive(Serialize)]
     struct ContestsContext {
         logged_user: LoggedUser,
+        flash_message: String,
         contests: Vec<FormattedContest>,
     }
 
-    Ok(HttpResponse::Ok().body(
+    Ok(flash::Response::new(
+        None,
+        HttpResponse::Ok().body(
         hb.render(
             "contests",
             &ContestsContext {
                 logged_user,
+                flash_message: flash.map_or("".into(), |f| f.into_inner()),
                 contests: get_formatted_contests(&pool, &tz)?,
             },
         )?,
-    ))
+    )))
 }
 
 use crate::models::contest;
@@ -882,8 +1004,12 @@ async fn create_contest(
     mut payload: Multipart,
     job_sender: web::Data<Sender<Job>>,
     job_result_sender: web::Data<broadcast::Sender<JobResult>>,
+    tz: web::Data<Tz>,
 ) -> PostResult {
-    let identity = require_identity(identity)?;
+    let logged_user = require_identity(identity)?;
+    if !logged_user.is_admin {
+      return Err(PostError::Unauthorized(UnauthorizedError {}));
+    }
 
     #[derive(Debug)]
     struct Form {
@@ -946,10 +1072,10 @@ async fn create_contest(
         &connection,
         contest::NewContest {
             name: form.name.unwrap(),
-            start_instant: form.start_instant.and_then(|s| s.parse().ok()),
-            end_instant: form.end_instant.and_then(|s| s.parse().ok()),
+            start_instant: form.start_instant.and_then(|s| tz.datetime_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()).map(|d| d.naive_utc()),
+            end_instant: form.end_instant.and_then(|s| tz.datetime_from_str(&s, "%Y-%m-%d %H:%M:%S").ok()).map(|d| d.naive_utc()),
             creation_instant: Local::now().naive_local(),
-            creation_user_id: identity.id,
+            creation_user_id: logged_user.id,
         },
     )?;
 
@@ -1084,7 +1210,7 @@ async fn create_contest(
                     .unwrap(),
                 status: "compiled".into(),
                 creation_instant: Local::now().naive_local(),
-                creation_user_id: identity.id,
+                creation_user_id: logged_user.id,
             },
         )?;
 

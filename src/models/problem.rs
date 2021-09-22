@@ -85,9 +85,10 @@ pub struct ProblemByContestWithScore {
     pub time_limit_ms: i32,
 }
 
-pub fn get_problems_by_contest_id_with_score(
+pub fn get_problems_user_by_contest_id_with_score(
     connection: &PgConnection,
-    contest_id: i32
+    user_id: i32,
+    contest_id: i32,
 ) -> QueryResult<Vec<ProblemByContestWithScore>> {
     diesel::sql_query("
         with first_ac as (
@@ -96,6 +97,7 @@ pub fn get_problems_by_contest_id_with_score(
                 contest_problem_id
             from submission
             where submission.verdict = 'AC'
+            and submission.user_id = $1
             group by submission.contest_problem_id
         )
         select
@@ -106,6 +108,7 @@ pub fn get_problems_by_contest_id_with_score(
                     first_ac.first_ac_submission_instant is null or
                     submission.submission_instant < first_ac.first_ac_submission_instant
                 )
+                and submission.user_id = $1
             ) as int) as failed_submissions,
             contest_problems.id,
             problem.name,
@@ -115,9 +118,10 @@ pub fn get_problems_by_contest_id_with_score(
         from contest_problems
         inner join problem on problem.id = contest_problems.problem_id
         left join first_ac on first_ac.contest_problem_id = contest_problems.id
-        where contest_id = $1
+        where contest_id = $2
         order by contest_problems.label
     ")
+    .bind::<sql_types::Integer, _>(user_id)
     .bind::<sql_types::Integer, _>(contest_id)
     .load(connection)
 }

@@ -5,15 +5,16 @@
   <link rel="stylesheet" href="/static/styles.css"/>
   <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://unpkg.com/monaco-editor@0.21.2/min/vs/editor/editor.main.css"/>
   <script src="https://unpkg.com/htmx.org@0.2.0"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 </head>
 <body>
   <header>
-    <h1>Jughisto</h1>
+    <h1><a href="/">Juĝisto</a></h1>
     <div class="span"></div>
     <div class="logged">
       {{ #if logged_user }}
-        {{ logged_user.name }}
-        {{ #if logged_user.is_admin }} (administrador){{ /if }}
+        <a href="/me">{{ logged_user.name }}{{ #if logged_user.is_admin }} (administrador){{ /if }}</a>
         <form id="logout-form" method="post" action="/logout">
           <button type="submit">sair</button>
         </form>
@@ -22,6 +23,11 @@
       {{ /if }}
     </div>
   </header>
+  {{ #if flash_message }}
+  <div class="info">
+    {{ flash_message }}
+  </div>
+  {{ /if }}
   <main>
     {{> @partial-block }}
   </main>

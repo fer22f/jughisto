@@ -8,3 +8,8 @@ services:
       - .prod_env
     volumes:
       - "./data:/data"
+    restart: on-failure
+  alvokanto:
+    volumes:
+      - "./data:/data"
+    restart: on-failure

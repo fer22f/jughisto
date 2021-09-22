@@ -1,9 +1,12 @@
 {{ #> base title="Início" }}
   <div id="contests">
-  {{ #each contests }}
-    <a href="/contests/{{ this.id }}" class="contest">
-      {{ this.name }} · {{ this.start_instant }} - {{ this.end_instant }}
-    </a>
-  {{ /each }}
+    {{ #each contests }}
+      <a href="/contests/{{ this.id }}" class="contest">
+        <div class="contest-info">
+          <div class="name">{{ this.name }}</div>
+          <div class="extra">{{ this.start_instant }} — {{ this.end_instant }}</div>
+        </div>
+      </a>
+    {{ /each }}
   </div>
 {{ /base }}

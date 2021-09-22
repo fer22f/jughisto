@@ -24,6 +24,15 @@ services:
       - "cargo_registry:/usr/local/cargo/registry"
       - "cargo_git:/usr/local/cargo/git"
       - "./data:/data"
+  database:
+    image: postgres:13
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_INITDB_ARGS: --locale=C.UTF-8
+      POSTGRES_USER: jughisto
+      POSTGRES_DB: jughisto
 
 volumes:
   cargo_registry:

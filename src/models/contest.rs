@@ -36,7 +36,7 @@ pub fn insert_contest(
 }
 
 pub fn get_contests(connection: &PgConnection) -> QueryResult<Vec<Contest>> {
-    contest::table.load(connection)
+    contest::table.order(contest::creation_instant.desc()).load(connection)
 }
 
 pub fn get_contest_by_id(connection: &PgConnection, id: i32) -> QueryResult<Contest> {
