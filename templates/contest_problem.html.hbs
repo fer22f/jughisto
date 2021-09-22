@@ -1,18 +1,18 @@
 {{ #> base title="Competição" }}
   <div id="problem">
     <div id="breadcumb">
-      <a href="/">Início</a>
+      <a href="{{base_url}}">Início</a>
       /
-      <a href="/contests/">Competições</a>
+      <a href="{{base_url}}contests/">Competições</a>
       /
-      <a href="/contests/{{ contest.id }}">{{ contest.name }}</a>
+      <a href="{{base_url}}contests/{{ contest.id }}">{{ contest.name }}</a>
       /
-      <a href="/contests/{{ contest.id }}/{{ problem.label }}">{{ problem.label }} · {{ problem.name }}</a>
+      <a href="{{base_url}}contests/{{ contest.id }}/{{ problem.label }}">{{ problem.label }} · {{ problem.name }}</a>
     </div>
 
     <div id="statement-submission">
-      <iframe src="/problems/{{problem.id}}/assets/problem.html" id="statement"></iframe>
-      <form id="submission" method="post" action="/submissions/">
+      <iframe src="{{base_url}}problems/{{problem.id}}/assets/problem.html" id="statement"></iframe>
+      <form id="submission" method="post" action="{{base_url}}submissions/">
         <input type="hidden" name="contest_problem_id" value="{{ problem.id }}">
         <label for="language">Linguagem</label>
         <select id="language" name="language">
@@ -39,7 +39,7 @@
     </div>
   </div>
 
-  <div id="submissions" hx-sse="connect:/submission_updates/">
+  <div id="submissions" hx-sse="connect:{{base_url}}submission_updates/">
     Submissões
     <div id="submissions-list" hx-get="/submissions/me/contests/{{ contest.id }}/{{ problem.label }}" hx-trigger="load, sse:update_submission">
     {{> submissions }}

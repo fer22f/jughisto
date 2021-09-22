@@ -1,5 +1,5 @@
 {{#> base title="Eu"}}
-  <form id="change-password" method="post" action="/me/password">
+  <form id="change-password" method="post" action="{{base_url}}me/password">
    <label for="old_password">
       Senha antiga
     </label>
@@ -18,7 +18,7 @@
   </form>
 
   {{#if logged_user.is_admin}}
-    <form id="create-user" method="post" action="/users/">
+    <form id="create-user" method="post" action="{{base_url}}users/">
       <label for="name">
         Nome
       </label>

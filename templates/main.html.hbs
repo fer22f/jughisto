@@ -1,7 +1,7 @@
 {{ #> base title="Início" }}
   <div id="contests">
     {{ #each contests }}
-      <a href="/contests/{{ this.id }}" class="contest">
+      <a href="{{base_url}}contests/{{ this.id }}" class="contest">
         <div class="contest-info">
           <div class="name">{{ this.name }}</div>
           <div class="extra">{{ this.start_instant }} — {{ this.end_instant }}</div>

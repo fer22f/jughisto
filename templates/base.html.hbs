@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <head>
   <title>Juĝisto · {{ title }}</title>
+  <base href="{{ base_url }}">
   <meta charset="utf-8"/>
-  <link rel="stylesheet" href="/static/styles.css"/>
+  <link rel="stylesheet" href="{{ base_url }}static/styles.css"/>
   <link rel="stylesheet" data-name="vs/editor/editor.main" href="https://unpkg.com/monaco-editor@0.21.2/min/vs/editor/editor.main.css"/>
   <script src="https://unpkg.com/htmx.org@0.2.0"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -10,16 +11,16 @@
 </head>
 <body>
   <header>
-    <h1><a href="/">Juĝisto</a></h1>
+    <h1><a href="{{base_url}}">Juĝisto</a></h1>
     <div class="span"></div>
     <div class="logged">
       {{ #if logged_user }}
-        <a href="/me">{{ logged_user.name }}{{ #if logged_user.is_admin }} (administrador){{ /if }}</a>
-        <form id="logout-form" method="post" action="/logout">
+        <a href="{{base_url}}me">{{ logged_user.name }}{{ #if logged_user.is_admin }} (administrador){{ /if }}</a>
+        <form id="logout-form" method="post" action="{{base_url}}logout">
           <button type="submit">sair</button>
         </form>
       {{ else }}
-        <a href="/login">entrar</a>
+      <a href="{{base_url}}login">entrar</a>
       {{ /if }}
     </div>
   </header>

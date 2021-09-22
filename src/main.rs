@@ -129,9 +129,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .app_data(Data::new(job_result_sender_data.clone()))
             .app_data(Data::new(languages_data.clone()))
             .app_data(Data::new(tz.clone()))
-            .app_data(web::PayloadConfig::default().limit(104857600+1))
-            .app_data(web::FormConfig::default().limit(104857600+1))
-            .app_data(web::JsonConfig::default().limit(104857600+1))
             .wrap(ErrorHandlers::new().handler(http::StatusCode::UNAUTHORIZED, render_401))
             .wrap(ErrorHandlers::new().handler(http::StatusCode::BAD_REQUEST, render_400))
             .wrap(flash::Flash::default())
@@ -144,6 +141,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .wrap(middleware::Logger::default())
             .app_data(broadcaster.clone())
             .app_data(handlebars_ref.clone())
+            .service(
+            web::scope("/jughisto")
             .service(get_login)
             .service(get_me)
             .service(change_password)
@@ -161,7 +160,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .service(create_user)
             .service(submission_updates)
             .service(Files::new("/static/", "./static/"))
-            .service(get_problem_by_id_assets)
+            .service(get_problem_by_id_assets))
     });
 
     server = if let Some(l) = listenfd
@@ -306,7 +305,8 @@ async fn get_login(
     #[derive(Serialize)]
     struct LoginContext {
         logged_user: Option<LoggedUser>,
-        flash_message: String
+        flash_message: String,
+        base_url: String,
     }
     Ok(flash::Response::new(
         None,
@@ -314,7 +314,9 @@ async fn get_login(
         "login",
         &LoginContext {
             logged_user,
-            flash_message: flash.map_or("".into(), |f| f.into_inner())
+            flash_message: flash.map_or("".into(), |f| f.into_inner()),
+            base_url: env::var("BASE_URL")
+                .expect("BASE_URL environment variable is not set")
         },
     )?)))
 }
@@ -329,7 +331,8 @@ async fn get_me(
     #[derive(Serialize)]
     struct MeContext {
         logged_user: LoggedUser,
-        flash_message: String
+        flash_message: String,
+        base_url: String,
     }
     Ok(flash::Response::new(
         None,
@@ -337,7 +340,9 @@ async fn get_me(
         "me",
         &MeContext {
             logged_user,
-            flash_message: flash.map_or("".into(), |f| f.into_inner())
+            flash_message: flash.map_or("".into(), |f| f.into_inner()),
+            base_url: env::var("BASE_URL")
+                .expect("BASE_URL environment variable is not set")
         },
     )?)))
 }
@@ -368,7 +373,9 @@ fn render_401(
         async move {
             let response = flash::Response::with_redirect(
                 String::from("Você precisa estar logado para acessar esta página"),
-                "/login",
+                &format!("{}login",
+                    &env::var("BASE_URL")
+                        .expect("BASE_URL environment variable is not set")),
             )
             .respond_to(res.request());
             Ok(res.into_response(response))
@@ -448,6 +455,7 @@ async fn get_contest_by_id(
         submissions: Vec<FormattedSubmission>,
         logged_user: LoggedUser,
         flash_message: String,
+        base_url: String,
     }
 
     let path = path.into_inner();
@@ -480,6 +488,8 @@ async fn get_contest_by_id(
                 }).collect(),
                 logged_user,
                 flash_message: flash.map_or("".into(), |f| f.into_inner()),
+                base_url: env::var("BASE_URL")
+                    .expect("BASE_URL environment variable is not set"),
                 submissions: submissions
                     .iter()
                     .map(|(s, c)| format_submission(&tz, s, c))
@@ -518,6 +528,7 @@ async fn get_contest_problem_by_id_label(
         problem: ProblemByContest,
         submissions: Vec<FormattedSubmission>,
         flash_message: String,
+        base_url: String,
         logged_user: LoggedUser,
     }
 
@@ -549,6 +560,8 @@ async fn get_contest_problem_by_id_label(
                 problems,
                 problem,
                 flash_message: flash.map_or("".into(), |f| f.into_inner()),
+                base_url: env::var("BASE_URL")
+                    .expect("BASE_URL environment variable is not set"),
                 language: session.get("language")?,
                 logged_user,
                 submissions: submissions
@@ -572,7 +585,9 @@ async fn post_logout(
     identity: Identity,
 ) -> PostResult {
     identity.forget();
-    Ok(flash::Response::with_redirect("".into(), "/"))
+    Ok(flash::Response::with_redirect("".into(),
+            &env::var("BASE_URL")
+                .expect("BASE_URL environment variable is not set")))
 }
 
 #[post("/login")]
@@ -608,7 +623,8 @@ async fn post_login(
                 })
                 .map_err(|_| PostError::Custom("Usuário no banco de dados inconsistente".into()))?,
             );
-            Ok(flash::Response::with_redirect("".into(), "/"))
+            Ok(flash::Response::with_redirect("".into(), &env::var("BASE_URL")
+                .expect("BASE_URL environment variable is not set")))
         }
     }
 }
@@ -776,8 +792,10 @@ fn redirect_to_referer(message: String, request: &HttpRequest) -> flash::Respons
     let referer = request
         .headers()
         .get("Referer")
-        .and_then(|h| h.to_str().ok()).unwrap_or("/".into());
-    flash::Response::with_redirect(message, referer)
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.into())
+        .unwrap_or(env::var("BASE_URL").expect("BASE_URL environment variable is not set"));
+    flash::Response::with_redirect(message, &referer)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -936,6 +954,7 @@ async fn get_main(
     struct MainContext {
         logged_user: Option<LoggedUser>,
         flash_message: String,
+        base_url: String,
         contests: Vec<FormattedContest>
     }
 
@@ -946,6 +965,8 @@ async fn get_main(
             "main",
             &MainContext {
                 flash_message: flash.map_or("".into(), |f| f.into_inner()),
+                base_url: env::var("BASE_URL")
+                    .expect("BASE_URL environment variable is not set"),
                 logged_user,
                 contests: get_formatted_contests(&pool, &tz)?,
             },
@@ -967,6 +988,7 @@ async fn get_contests(
     struct ContestsContext {
         logged_user: LoggedUser,
         flash_message: String,
+        base_url: String,
         contests: Vec<FormattedContest>,
     }
 
@@ -978,6 +1000,8 @@ async fn get_contests(
             &ContestsContext {
                 logged_user,
                 flash_message: flash.map_or("".into(), |f| f.into_inner()),
+                base_url: env::var("BASE_URL")
+                    .expect("BASE_URL environment variable is not set"),
                 contests: get_formatted_contests(&pool, &tz)?,
             },
         )?,

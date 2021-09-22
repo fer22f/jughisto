@@ -1,16 +1,16 @@
 {{ #> base title="Competição" }}
   <div id="contest">
     <div id="breadcumb">
-      <a href="/">Início</a>
+      <a href="{{base_url}}">Início</a>
       /
-      <a href="/contests/">Competições</a>
+      <a href="{{base_url}}contests/">Competições</a>
       /
-      <a href="/contests/{{ contest.id }}">{{ contest.name }}</a>
+      <a href="{{base_url}}contests/{{ contest.id }}">{{ contest.name }}</a>
     </div>
 
     <div id="problems">
       {{ #each problems }}
-      <a href="/contests/{{ ../contest.id }}/{{ this.label }}" class="problem">
+      <a href="{{base_url}}contests/{{ ../contest.id }}/{{ this.label }}" class="problem">
         <div class="problem-info">
           <div class="name">
             {{ this.label }} · {{ this.name }}

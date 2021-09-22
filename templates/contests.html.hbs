@@ -1,9 +1,9 @@
 {{#> base title="Competições"}}
   <div id="contests">
     <div id="breadcumb">
-      <a href="/">Início</a>
+      <a href="{{base_url}}">Início</a>
       /
-      <a href="/contests/">Competições</a>
+      <a href="{{base_url}}contests/">Competições</a>
     </div>
 
     <table>
@@ -18,10 +18,10 @@
       <tbody>
         {{ #each contests }}
         <tr>
-          <td><a href="/contests/{{ this.id }}">{{ this.name }}</a></td>
-          <td class="right"><a href="/contests/{{ this.id }}">{{ this.start_instant }}</a></td>
-          <td class="right"><a href="/contests/{{ this.id }}">{{ this.end_instant }}</a></td>
-          <td class="right"><a href="/contests/{{ this.id }}">{{ this.creation_instant }}</a></td>
+          <td><a href="{{base_url}}contests/{{ this.id }}">{{ this.name }}</a></td>
+          <td class="right"><a href="{{base_url}}contests/{{ this.id }}">{{ this.start_instant }}</a></td>
+          <td class="right"><a href="{{base_url}}contests/{{ this.id }}">{{ this.end_instant }}</a></td>
+          <td class="right"><a href="{{base_url}}contests/{{ this.id }}">{{ this.creation_instant }}</a></td>
         </tr>
         {{ /each }}
       </tbody>
@@ -29,7 +29,7 @@
   </div>
 
   {{#if logged_user.is_admin }}
-    <form id="create-contest-form" enctype="multipart/form-data" method="post" action="/contests/">
+    <form id="create-contest-form" enctype="multipart/form-data" method="post" action="{{base_url}}contests/">
       <label for="name">
         Nome
       </label>
